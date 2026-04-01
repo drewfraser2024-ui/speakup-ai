@@ -1,534 +1,758 @@
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 
-// ===== Supabase Setup =====
-// To connect Supabase: set these in Vercel env vars or replace below
-const SUPABASE_URL = window.__SUPABASE_URL__ || "";
-const SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY__ || "";
+// ===== STORAGE =====
+function store(key, val) { localStorage.setItem("su_" + key, JSON.stringify(val)); }
+function load(key, fallback) { try { return JSON.parse(localStorage.getItem("su_" + key)) || fallback; } catch { return fallback; } }
 
-let supabaseClient = null;
-let useSupabase = false;
-
-if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase) {
-  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  useSupabase = true;
-  console.log("Supabase connected");
-}
-
-// Fallback: localStorage for session history
-function getLocalSessions() {
-  try {
-    return JSON.parse(localStorage.getItem("speakup_sessions") || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalSession(session) {
-  const sessions = getLocalSessions();
-  sessions.unshift(session);
-  if (sessions.length > 50) sessions.length = 50;
-  localStorage.setItem("speakup_sessions", JSON.stringify(sessions));
-}
-
-async function saveSession(sessionData) {
-  if (useSupabase) {
-    try {
-      await supabaseClient.from("sessions").insert(sessionData);
-    } catch (err) {
-      console.error("Supabase save error:", err);
-      saveLocalSession(sessionData);
-    }
-  } else {
-    saveLocalSession(sessionData);
-  }
-}
-
-async function loadSessions() {
-  if (useSupabase) {
-    try {
-      const { data, error } = await supabaseClient
-        .from("sessions")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (error) throw error;
-      return data || [];
-    } catch (err) {
-      console.error("Supabase load error:", err);
-      return getLocalSessions();
-    }
-  }
-  return getLocalSessions();
-}
-
-// State
-let difficulty = "easy";
+// ===== STATE =====
+let profile = load("profile", null);
+let sessions = load("sessions", []);
+let difficulty = load("difficulty", "easy");
+let currentMode = null; // "open" or "convo"
 let messages = [];
 let turnCount = 0;
-let latestScores = null;
-let allRatings = [];
+let openTranscript = "";
+let timerInterval = null;
+let timerSeconds = 0;
 let isRecording = false;
 let recognition = null;
 let sessionStartTime = null;
+let lastSessionMode = load("lastMode", null);
 
-// Elements
-const landingScreen = $("#landing-screen");
-const chatScreen = $("#chat-screen");
-const historyScreen = $("#history-screen");
-const chatMessages = $("#chat-messages");
-const textInput = $("#text-input");
-const sendBtn = $("#send-btn");
-const micBtn = $("#mic-btn");
-const backBtn = $("#back-btn");
-const diffBadge = $("#difficulty-badge");
-const liveScore = $("#live-score");
-const turnCountEl = $("#turn-count");
-const speechStatus = $("#speech-status");
-const ratingPanel = $("#rating-panel");
-const closeRatingBtn = $("#close-rating");
-const ratingTip = $("#rating-tip");
-const historyBtn = $("#history-btn");
-const historyBackBtn = $("#history-back-btn");
-const historyList = $("#history-list");
+// Daily content seeded by date
+const today = new Date().toISOString().slice(0, 10);
+let dailyContent = load("daily_" + today, null);
 
-// ===== Init Speech Recognition =====
-function initSpeechRecognition() {
-  const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) return null;
+// ===== SCREENS =====
+const screens = {
+  onboard: $("#onboard-screen"),
+  home: $("#home-screen"),
+  open: $("#open-screen"),
+  convo: $("#convo-screen"),
+  results: $("#results-screen"),
+  progress: $("#progress-screen"),
+};
 
-  const rec = new SpeechRecognition();
+function showScreen(name) {
+  Object.values(screens).forEach((s) => s.classList.remove("active"));
+  screens[name].classList.add("active");
+}
+
+// ===== INIT =====
+function init() {
+  if (!profile) {
+    showScreen("onboard");
+  } else {
+    loadHome();
+    showScreen("home");
+  }
+  setupDiffPills();
+  setupBackButtons();
+}
+
+// ===== ONBOARDING =====
+let obData = { goal: "", topics: [], tone: "", purpose: "" };
+let obStep = 1;
+
+$$(".ob-opt").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const key = btn.dataset.key;
+    const val = btn.dataset.val;
+    const step = btn.closest(".ob-step");
+    const isMulti = step.querySelector(".ob-options").classList.contains("multi");
+
+    if (isMulti) {
+      btn.classList.toggle("selected");
+      if (!obData.topics) obData.topics = [];
+      if (btn.classList.contains("selected")) {
+        obData.topics.push(val);
+      } else {
+        obData.topics = obData.topics.filter((t) => t !== val);
+      }
+      const nextBtn = $("#ob-topics-next");
+      if (obData.topics.length > 0) nextBtn.classList.remove("hidden");
+      else nextBtn.classList.add("hidden");
+    } else {
+      step.querySelectorAll(".ob-opt").forEach((o) => o.classList.remove("selected"));
+      btn.classList.add("selected");
+      obData[key] = val;
+      setTimeout(() => advanceOnboarding(), 300);
+    }
+  });
+});
+
+$("#ob-topics-next").addEventListener("click", () => advanceOnboarding());
+
+function advanceOnboarding() {
+  obStep++;
+  if (obStep > 4) {
+    profile = { ...obData, created: today };
+    store("profile", profile);
+    loadHome();
+    showScreen("home");
+    return;
+  }
+  $$(".ob-step").forEach((s) => s.classList.remove("active"));
+  $(`.ob-step[data-step="${obStep}"]`).classList.add("active");
+  $("#ob-fill").style.width = `${obStep * 25}%`;
+  $("#ob-step-label").textContent = `${obStep} of 4`;
+}
+
+// ===== HOME =====
+async function loadHome() {
+  // Greeting
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  $("#home-greeting").textContent = greet;
+
+  // Stats
+  const streak = calcStreak();
+  $("#home-streak").textContent = streak;
+  $("#prog-streak")  && ($("#prog-streak").textContent = streak);
+
+  // Daily content
+  if (!dailyContent) {
+    dailyContent = await fetchDailyContent();
+    store("daily_" + today, dailyContent);
+  }
+  if (dailyContent) {
+    $("#daily-word").textContent = dailyContent.word || "—";
+    $("#daily-word-def").textContent = dailyContent.definition || "—";
+    $("#daily-word-use").textContent = dailyContent.example ? `"${dailyContent.example}"` : "";
+    $("#daily-fact").textContent = dailyContent.fact || "—";
+    $("#challenge-desc").textContent = dailyContent.challenge || "Complete one speaking session today.";
+  }
+
+  // Continue last
+  if (lastSessionMode) {
+    $("#continue-btn").classList.remove("hidden");
+    $("#cont-detail").textContent = lastSessionMode === "open" ? "Open-Ended" : "Conversation";
+  }
+}
+
+async function fetchDailyContent() {
+  try {
+    const res = await fetch("/api/daily", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile, date: today }),
+    });
+    return await res.json();
+  } catch {
+    return {
+      word: "Articulate",
+      definition: "Having or showing the ability to speak fluently and express oneself clearly.",
+      example: "She gave an articulate presentation that captivated the audience.",
+      fact: "The average person speaks about 16,000 words per day.",
+      challenge: "Use zero filler words in your next 60-second response.",
+    };
+  }
+}
+
+function calcStreak() {
+  if (sessions.length === 0) return 0;
+  let streak = 0;
+  const d = new Date();
+  for (let i = 0; i < 365; i++) {
+    const dateStr = d.toISOString().slice(0, 10);
+    if (sessions.some((s) => s.date === dateStr)) {
+      streak++;
+    } else if (i > 0) {
+      break;
+    }
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+
+// ===== DIFFICULTY =====
+function setupDiffPills() {
+  $$(".diff-pill").forEach((pill) => {
+    if (pill.dataset.diff === difficulty) pill.classList.add("active");
+    else pill.classList.remove("active");
+    pill.addEventListener("click", () => {
+      difficulty = pill.dataset.diff;
+      store("difficulty", difficulty);
+      $$(".diff-pill").forEach((p) => p.classList.remove("active"));
+      pill.classList.add("active");
+    });
+  });
+}
+
+// ===== BACK BUTTONS =====
+function setupBackButtons() {
+  $$(".back-to-home").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      stopTimer();
+      stopRecording();
+      loadHome();
+      showScreen("home");
+    });
+  });
+}
+
+// ===== SPEECH RECOGNITION =====
+function createRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const rec = new SR();
   rec.continuous = true;
   rec.interimResults = true;
   rec.lang = "en-US";
-
-  let finalTranscript = "";
-
-  rec.onresult = (event) => {
-    let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript + " ";
-      } else {
-        interim += event.results[i][0].transcript;
-      }
-    }
-    textInput.value = finalTranscript + interim;
-  };
-
-  rec.onend = () => {
-    if (isRecording) {
-      const text = textInput.value.trim();
-      if (text) {
-        sendMessage(text, "voice");
-        textInput.value = "";
-      }
-      stopRecording();
-    }
-  };
-
-  rec.onerror = (event) => {
-    console.error("Speech recognition error:", event.error);
-    stopRecording();
-  };
-
-  rec._resetTranscript = () => {
-    finalTranscript = "";
-  };
-
   return rec;
 }
 
-function startRecording() {
-  if (!recognition) {
-    recognition = initSpeechRecognition();
-    if (!recognition) {
-      addSystemMessage(
-        "Speech recognition is not supported in your browser. Please type instead."
-      );
-      return;
+function startRecording(onResult, onEnd, statusEl, micEl) {
+  if (!recognition) recognition = createRecognition();
+  if (!recognition) return false;
+
+  let finalTranscript = "";
+  recognition.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalTranscript += e.results[i][0].transcript + " ";
+      else interim += e.results[i][0].transcript;
     }
-  }
+    onResult(finalTranscript, interim);
+  };
+  recognition.onend = () => {
+    if (isRecording) { try { recognition.start(); } catch {} }
+    else if (onEnd) onEnd(finalTranscript);
+  };
+  recognition.onerror = () => { stopRecordingUI(statusEl, micEl); };
 
   isRecording = true;
-  recognition._resetTranscript();
-  textInput.value = "";
-  micBtn.classList.add("recording");
-  speechStatus.classList.remove("hidden");
-
-  try {
-    recognition.start();
-  } catch (e) {}
+  if (micEl) micEl.classList.add("recording");
+  if (statusEl) statusEl.classList.remove("hidden");
+  try { recognition.start(); } catch {}
+  return true;
 }
 
 function stopRecording() {
   isRecording = false;
-  micBtn.classList.remove("recording");
-  speechStatus.classList.add("hidden");
-
-  try {
-    recognition?.stop();
-  } catch (e) {}
+  try { recognition?.stop(); } catch {}
 }
 
-// ===== Screen Navigation =====
-function showScreen(screen) {
-  [landingScreen, chatScreen, historyScreen].forEach((s) =>
-    s.classList.remove("active")
-  );
-  screen.classList.add("active");
+function stopRecordingUI(statusEl, micEl) {
+  isRecording = false;
+  if (micEl) micEl.classList.remove("recording");
+  if (statusEl) statusEl.classList.add("hidden");
+  try { recognition?.stop(); } catch {}
 }
 
-// ===== Difficulty Selection =====
-$$(".diff-card").forEach((card) => {
-  card.addEventListener("click", () => {
-    difficulty = card.dataset.difficulty;
-    startSession();
-  });
+// ===== TIMER =====
+function startTimer() {
+  timerSeconds = 0;
+  updateTimerDisplay();
+  timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); }, 1000);
+}
+function stopTimer() { clearInterval(timerInterval); }
+function updateTimerDisplay() {
+  const m = Math.floor(timerSeconds / 60);
+  const s = timerSeconds % 60;
+  const el = $("#open-timer");
+  if (el) el.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// ===== OPEN-ENDED MODE =====
+const openPrompts = {
+  easy: [
+    "Describe your perfect day from morning to night.",
+    "Talk about a hobby you enjoy and why you started it.",
+    "What is your favorite meal and what makes it special?",
+    "Describe your best friend without saying their name.",
+    "What would you do with an unexpected day off?",
+  ],
+  medium: [
+    "Describe a skill you want to improve and your plan to do it.",
+    "What is something you strongly believe and why?",
+    "Talk about a mistake that taught you an important lesson.",
+    "Explain a concept from your work or studies to someone unfamiliar.",
+    "If you could change one thing about your city, what would it be?",
+  ],
+  hard: [
+    "Make a compelling argument for or against social media in schools.",
+    "Explain your dream life in two minutes with specific details.",
+    "Present a business idea and convince me to invest.",
+    "Describe a complex problem you solved and walk me through your process.",
+    "Argue the opposite of a position you actually hold.",
+  ],
+  veryhard: [
+    "You have 90 seconds to convince me your biggest life decision was right.",
+    "Defend an unpopular opinion with structured evidence.",
+    "Give an impromptu eulogy for a stranger based only on their job title: teacher.",
+    "Pitch yourself for your dream job in under 2 minutes. No filler words allowed.",
+    "Explain why your generation is misunderstood. Be specific, be sharp.",
+  ],
+};
+
+function getRandomPrompt() {
+  const list = openPrompts[difficulty] || openPrompts.easy;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+$("#mode-open").addEventListener("click", () => startOpenMode());
+$("#open-skip-btn").addEventListener("click", () => {
+  $("#open-prompt-text").textContent = getRandomPrompt();
 });
 
-function startSession() {
-  messages = [];
-  turnCount = 0;
-  latestScores = null;
-  allRatings = [];
-  sessionStartTime = new Date();
-  liveScore.textContent = "--";
-  turnCountEl.textContent = "0";
-  chatMessages.innerHTML = "";
-  ratingPanel.classList.add("hidden");
+function startOpenMode() {
+  currentMode = "open";
+  lastSessionMode = "open";
+  store("lastMode", "open");
+  sessionStartTime = Date.now();
+  openTranscript = "";
 
-  const labels = {
-    easy: "Easy",
-    medium: "Medium",
-    hard: "Hard",
-    veryhard: "Very Hard"
-  };
-  diffBadge.textContent = labels[difficulty];
-  diffBadge.className = `badge ${difficulty}`;
+  const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
+  $("#open-diff-badge").textContent = labels[difficulty];
+  $("#open-diff-badge").className = `badge ${difficulty}`;
+  $("#open-prompt-text").textContent = getRandomPrompt();
+  $("#open-transcript").innerHTML = '<p class="transcript-placeholder">Your words will appear here as you speak...</p>';
+  $("#open-done-btn").classList.add("hidden");
+  $("#open-mic-label").textContent = "Tap to Start";
+  $("#open-timer").textContent = "0:00";
 
-  showScreen(chatScreen);
-
-  const openers = {
-    easy: "Hey there! I'm your speech buddy. Let's have a nice chat to practice your speaking skills. No pressure at all - just talk naturally. So, what's something fun you did recently?",
-    medium:
-      "Welcome to your speech training session. I'll be guiding you through some engaging topics to sharpen your communication skills. Let's start with this: What's a topic you feel strongly about, and why?",
-    hard: "Training session initiated. I expect articulate, well-structured responses from you. No filler words, no rambling. Let's begin: Present a compelling argument for or against remote work. You have one response. Make it count.",
-    veryhard:
-      "Listen up. This is elite-level speech training. I will challenge every word you say. I will not be nice about it. Weak answers get called out immediately. Ready? Convince me right now why your biggest life decision was the right call. Go."
-  };
-
-  addMessage("ai", openers[difficulty]);
-  messages.push({ role: "assistant", content: openers[difficulty] });
-
-  addSystemMessage(
-    `Difficulty: ${labels[difficulty]} | Speak or type to respond`
-  );
-  textInput.focus();
+  showScreen("open");
 }
 
-async function endSession() {
-  if (turnCount === 0) return;
+let openRecording = false;
+$("#open-mic-btn").addEventListener("click", () => {
+  if (!openRecording) {
+    openRecording = true;
+    $("#open-mic-label").textContent = "Recording...";
+    $("#open-done-btn").classList.remove("hidden");
+    startTimer();
 
-  // Calculate average scores from all ratings
-  const avgScores = {};
-  if (allRatings.length > 0) {
-    const keys = [
-      "clarity",
-      "vocabulary",
-      "confidence",
-      "structure",
-      "fillerWords",
-      "overall"
-    ];
-    keys.forEach((key) => {
-      const sum = allRatings.reduce((a, r) => a + (r[key] || 0), 0);
-      avgScores[key] = Math.round((sum / allRatings.length) * 10) / 10;
-    });
+    startRecording(
+      (final, interim) => {
+        openTranscript = final;
+        $("#open-transcript").innerHTML =
+          `<p>${final}<span style="color:var(--text2)">${interim}</span></p>`;
+      },
+      null,
+      null,
+      $("#open-mic-btn")
+    );
+  } else {
+    openRecording = false;
+    $("#open-mic-label").textContent = "Tap to Start";
+    stopRecordingUI(null, $("#open-mic-btn"));
+    stopTimer();
   }
+});
 
-  const sessionData = {
-    difficulty,
-    turns: turnCount,
-    scores: avgScores,
-    duration_seconds: Math.round((Date.now() - sessionStartTime) / 1000),
-    created_at: new Date().toISOString()
-  };
+$("#open-done-btn").addEventListener("click", async () => {
+  openRecording = false;
+  stopRecordingUI(null, $("#open-mic-btn"));
+  stopTimer();
+  const text = openTranscript.trim();
+  if (!text) return;
+  const prompt = $("#open-prompt-text").textContent;
+  await analyzeAndShowResults(text, "open", prompt);
+});
 
-  await saveSession(sessionData);
+// ===== CONVERSATION MODE =====
+const convoOpeners = {
+  easy: "Hey! Let's just chat. Tell me about something that made you smile recently.",
+  medium: "Welcome to your training session. Let's dig into a real topic. What's something happening in the world that you have an opinion on?",
+  hard: "Session started. I expect structured, clear answers. No rambling. Here's your first challenge: What's the most overrated piece of advice people give, and why is it wrong?",
+  veryhard: "This is elite training. I will push back on everything you say. Weak answers get called out. Ready? Tell me — what makes you think you're good at communicating? Prove it.",
+};
+
+let convoMessages = [];
+let convoTurnCount = 0;
+let convoTranscript = "";
+
+$("#mode-convo").addEventListener("click", () => startConvoMode());
+
+function startConvoMode() {
+  currentMode = "convo";
+  lastSessionMode = "convo";
+  store("lastMode", "convo");
+  sessionStartTime = Date.now();
+  convoMessages = [];
+  convoTurnCount = 0;
+  convoTranscript = "";
+
+  const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
+  $("#convo-diff-badge").textContent = labels[difficulty];
+  $("#convo-diff-badge").className = `badge ${difficulty}`;
+  $("#convo-turns").textContent = "0";
+  $("#convo-messages").innerHTML = "";
+
+  const opener = convoOpeners[difficulty] || convoOpeners.easy;
+  convoMessages.push({ role: "assistant", content: opener });
+  addChatMsg("ai", opener);
+
+  showScreen("convo");
+  $("#convo-input").focus();
 }
 
-// ===== Messages =====
-function addMessage(role, text, method) {
+function addChatMsg(role, text, method) {
   const div = document.createElement("div");
   div.className = `message ${role}`;
-
-  const cleanText = text.replace(/\[RATING\][\s\S]*?\[\/RATING\]/g, "").trim();
-
+  const clean = text.replace(/\[RATING\][\s\S]*?\[\/RATING\]/g, "").trim();
   if (method) {
-    const methodSpan = document.createElement("span");
-    methodSpan.className = "msg-method";
-    methodSpan.textContent = method === "voice" ? "Voice" : "Typed";
-    div.appendChild(methodSpan);
+    const m = document.createElement("span");
+    m.className = "msg-method";
+    m.textContent = method === "voice" ? "Voice" : "Typed";
+    div.appendChild(m);
   }
-
-  const content = document.createElement("span");
-  content.textContent = cleanText;
-  div.appendChild(content);
-
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function addSystemMessage(text) {
-  const div = document.createElement("div");
-  div.className = "system-msg";
-  div.innerHTML = `<p>${text}</p>`;
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  const c = document.createElement("span");
+  c.textContent = clean;
+  div.appendChild(c);
+  $("#convo-messages").appendChild(div);
+  $("#convo-messages").scrollTop = $("#convo-messages").scrollHeight;
 }
 
 function showTyping() {
-  const div = document.createElement("div");
-  div.className = "typing-indicator";
-  div.id = "typing";
-  div.innerHTML = "<span></span><span></span><span></span>";
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  const d = document.createElement("div");
+  d.className = "typing-indicator";
+  d.id = "typing";
+  d.innerHTML = "<span></span><span></span><span></span>";
+  $("#convo-messages").appendChild(d);
+  $("#convo-messages").scrollTop = $("#convo-messages").scrollHeight;
 }
+function hideTyping() { const e = $("#typing"); if (e) e.remove(); }
 
-function hideTyping() {
-  const el = $("#typing");
-  if (el) el.remove();
-}
-
-// ===== Rating =====
-function parseRating(text) {
-  const match = text.match(/\[RATING\]([\s\S]*?)\[\/RATING\]/);
-  if (!match) return null;
-  try {
-    return JSON.parse(match[1]);
-  } catch {
-    return null;
-  }
-}
-
-function showRating(scores) {
-  latestScores = scores;
-  allRatings.push(scores);
-
-  const categories = [
-    "clarity",
-    "vocabulary",
-    "confidence",
-    "structure",
-    "fillerWords",
-    "overall"
-  ];
-
-  categories.forEach((cat) => {
-    const score = scores[cat] || 0;
-    const bar = $(`#bar-${cat}`);
-    const num = $(`#score-${cat}`);
-
-    if (bar && num) {
-      setTimeout(() => {
-        bar.style.width = `${score * 10}%`;
-
-        if (score >= 8)
-          bar.style.background = `linear-gradient(90deg, var(--success), #22d3ee)`;
-        else if (score >= 5)
-          bar.style.background = `linear-gradient(90deg, var(--primary), var(--accent))`;
-        else
-          bar.style.background = `linear-gradient(90deg, var(--danger), var(--warning))`;
-      }, 100);
-
-      num.textContent = score;
-    }
-  });
-
-  if (scores.tip) {
-    ratingTip.textContent = scores.tip;
-  }
-
-  liveScore.textContent = scores.overall || "--";
-  ratingPanel.classList.remove("hidden");
-}
-
-// ===== Send Message =====
-async function sendMessage(text, method = "typed") {
+async function sendConvoMessage(text, method = "typed") {
   if (!text.trim()) return;
-
-  addMessage("user", text, method);
-  messages.push({ role: "user", content: text });
-  turnCount++;
-  turnCountEl.textContent = turnCount;
-
-  textInput.value = "";
-  textInput.disabled = true;
-  sendBtn.disabled = true;
+  addChatMsg("user", text, method);
+  convoMessages.push({ role: "user", content: text });
+  convoTurnCount++;
+  convoTranscript += text + " ";
+  $("#convo-turns").textContent = convoTurnCount;
+  $("#convo-input").value = "";
+  $("#convo-input").disabled = true;
 
   showTyping();
-
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, difficulty })
+      body: JSON.stringify({
+        messages: convoMessages,
+        difficulty,
+        profile,
+        mode: "conversation",
+      }),
     });
-
     const data = await res.json();
     hideTyping();
-
-    if (data.error) {
-      addSystemMessage("Error: " + data.error);
-    } else {
-      const aiText = data.response;
-      messages.push({ role: "assistant", content: aiText });
-      addMessage("ai", aiText);
-
-      const rating = parseRating(aiText);
-      if (rating) {
-        showRating(rating);
-      }
+    if (data.response) {
+      convoMessages.push({ role: "assistant", content: data.response });
+      addChatMsg("ai", data.response);
     }
-  } catch (err) {
+  } catch {
     hideTyping();
-    addSystemMessage("Connection error. Please try again.");
-    console.error(err);
+    addChatMsg("ai", "Connection error. Try again.");
   }
-
-  textInput.disabled = false;
-  sendBtn.disabled = false;
-  textInput.focus();
+  $("#convo-input").disabled = false;
+  $("#convo-input").focus();
 }
 
-// ===== History =====
-async function showHistory() {
-  const sessions = await loadSessions();
+$("#convo-send-btn").addEventListener("click", () => sendConvoMessage($("#convo-input").value));
+$("#convo-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendConvoMessage($("#convo-input").value); }
+});
 
-  if (sessions.length === 0) {
-    historyList.innerHTML =
-      '<div class="system-msg"><p>No sessions yet. Start a conversation to build your history.</p></div>';
-  } else {
-    const labels = {
-      easy: "Easy",
-      medium: "Medium",
-      hard: "Hard",
-      veryhard: "Very Hard"
+// Mic for conversation
+let convoRecording = false;
+$("#convo-mic-btn").addEventListener("mousedown", (e) => { e.preventDefault(); startConvoRecording(); });
+$("#convo-mic-btn").addEventListener("mouseup", () => stopConvoRecording());
+$("#convo-mic-btn").addEventListener("mouseleave", () => { if (convoRecording) stopConvoRecording(); });
+$("#convo-mic-btn").addEventListener("touchstart", (e) => { e.preventDefault(); startConvoRecording(); });
+$("#convo-mic-btn").addEventListener("touchend", (e) => { e.preventDefault(); stopConvoRecording(); });
+
+function startConvoRecording() {
+  convoRecording = true;
+  startRecording(
+    (final, interim) => { $("#convo-input").value = final + interim; },
+    null,
+    $("#convo-speech-status"),
+    $("#convo-mic-btn")
+  );
+}
+function stopConvoRecording() {
+  if (!convoRecording) return;
+  convoRecording = false;
+  stopRecordingUI($("#convo-speech-status"), $("#convo-mic-btn"));
+  setTimeout(() => {
+    const text = $("#convo-input").value.trim();
+    if (text) { sendConvoMessage(text, "voice"); $("#convo-input").value = ""; }
+  }, 300);
+}
+
+// End conversation session
+$("#convo-end-btn").addEventListener("click", async () => {
+  stopRecording();
+  if (convoTurnCount === 0) return;
+  await analyzeAndShowResults(convoTranscript, "conversation", null);
+});
+
+// Continue button
+$("#continue-btn").addEventListener("click", () => {
+  if (lastSessionMode === "open") startOpenMode();
+  else startConvoMode();
+});
+
+// ===== ANALYSIS & RESULTS =====
+async function analyzeAndShowResults(text, mode, prompt) {
+  showScreen("results");
+  $("#overall-num").textContent = "...";
+  $("#overall-label").textContent = "Analyzing your speech...";
+
+  try {
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, difficulty, mode, prompt, profile }),
+    });
+    const data = await res.json();
+    displayResults(data, text, mode);
+
+    // Save session
+    const session = {
+      date: today,
+      mode,
+      difficulty,
+      scores: data,
+      duration: Math.round((Date.now() - sessionStartTime) / 1000),
+      overall: data.overall || 0,
     };
+    sessions.unshift(session);
+    if (sessions.length > 100) sessions.length = 100;
+    store("sessions", sessions);
+  } catch {
+    $("#overall-label").textContent = "Analysis failed. Try again.";
+  }
+}
 
-    historyList.innerHTML = sessions
-      .map((s) => {
-        const date = new Date(s.created_at).toLocaleDateString("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit"
-        });
-        const mins = Math.round((s.duration_seconds || 0) / 60);
-        const scores = s.scores || {};
+function displayResults(data, transcript, mode) {
+  // Overall score animation
+  const overall = data.overall || 0;
+  const circumference = 326.73;
+  const offset = circumference - (overall / 10) * circumference;
+  const ring = $("#score-ring");
+  setTimeout(() => { ring.style.transition = "stroke-dashoffset 1.2s ease"; ring.style.strokeDashoffset = offset; }, 100);
 
-        return `
+  let count = 0;
+  const counterAnim = setInterval(() => {
+    count += 0.2;
+    if (count >= overall) { count = overall; clearInterval(counterAnim); }
+    $("#overall-num").textContent = count.toFixed(1);
+  }, 30);
+
+  // Label
+  if (overall >= 8) $("#overall-label").textContent = "Excellent work!";
+  else if (overall >= 6) $("#overall-label").textContent = "Solid performance. Room to grow.";
+  else if (overall >= 4) $("#overall-label").textContent = "Decent start. Keep pushing.";
+  else $("#overall-label").textContent = "Rough session. Let's improve.";
+
+  // Score bars
+  const cats = ["clarity", "confidence", "flow", "conciseness", "vocabulary", "engagement", "fillerWords"];
+  cats.forEach((cat) => {
+    const row = $(`.score-bar-row[data-cat="${cat}"]`);
+    if (!row) return;
+    const score = data[cat] || 0;
+    const fill = row.querySelector(".sb-fill");
+    const num = row.querySelector(".sb-num");
+    setTimeout(() => {
+      fill.style.width = `${score * 10}%`;
+      if (score >= 8) fill.style.background = "linear-gradient(90deg, var(--success), #22d3ee)";
+      else if (score >= 5) fill.style.background = "linear-gradient(90deg, var(--primary), var(--accent))";
+      else fill.style.background = "linear-gradient(90deg, var(--danger), var(--warning))";
+    }, 200);
+    num.textContent = score;
+  });
+
+  // Strongest / Weakest
+  const scoreEntries = cats.map((c) => ({ name: c, score: data[c] || 0 }));
+  scoreEntries.sort((a, b) => b.score - a.score);
+  const nameMap = { clarity: "Clarity", confidence: "Confidence", flow: "Flow", conciseness: "Conciseness", vocabulary: "Vocabulary", engagement: "Engagement", fillerWords: "Filler Words" };
+  $("#strongest-area").textContent = nameMap[scoreEntries[0].name] || scoreEntries[0].name;
+  $("#weakest-area").textContent = nameMap[scoreEntries[scoreEntries.length - 1].name] || scoreEntries[scoreEntries.length - 1].name;
+
+  // Feedback
+  const fbList = $("#feedback-list");
+  fbList.innerHTML = "";
+  (data.fixes || []).forEach((fix) => {
+    const li = document.createElement("li");
+    li.textContent = fix;
+    fbList.appendChild(li);
+  });
+
+  // Filler breakdown
+  const fillerSection = $("#filler-section");
+  const fillerDiv = $("#filler-breakdown");
+  if (data.fillerBreakdown && Object.keys(data.fillerBreakdown).length > 0) {
+    fillerSection.classList.remove("hidden");
+    fillerDiv.innerHTML = Object.entries(data.fillerBreakdown)
+      .map(([word, count]) => `<span class="filler-chip">"${word}" <strong>&times;${count}</strong></span>`)
+      .join("");
+  } else {
+    fillerSection.classList.add("hidden");
+  }
+
+  // Wording suggestions
+  const wordingSection = $("#wording-section");
+  const wordingList = $("#wording-list");
+  if (data.wordingSuggestions && data.wordingSuggestions.length > 0) {
+    wordingSection.classList.remove("hidden");
+    wordingList.innerHTML = data.wordingSuggestions
+      .map((w) => `<div class="wording-item"><span class="wi-bad">${w.original}</span><span class="wi-arrow">&rarr;</span><span class="wi-good">${w.better}</span></div>`)
+      .join("");
+  } else {
+    wordingSection.classList.add("hidden");
+  }
+
+  // Transcript with highlighted fillers
+  const fillerWords = ["um", "uh", "like", "you know", "basically", "literally", "actually", "so", "right", "i mean"];
+  let highlighted = transcript;
+  fillerWords.forEach((fw) => {
+    const regex = new RegExp(`\\b(${fw})\\b`, "gi");
+    highlighted = highlighted.replace(regex, '<span class="filler-highlight">$1</span>');
+  });
+  $("#results-transcript").innerHTML = highlighted || "<em>No transcript available.</em>";
+
+  // Next challenge
+  $("#next-challenge-text").textContent = data.nextChallenge || "Complete another session and try to beat this score.";
+
+  // Reset ring for next time
+  ring.style.transition = "none";
+}
+
+// Results buttons
+$("#results-retry").addEventListener("click", () => {
+  // Reset the score ring
+  $("#score-ring").style.strokeDashoffset = 326.73;
+  if (currentMode === "open") startOpenMode();
+  else startConvoMode();
+});
+$("#results-home").addEventListener("click", () => {
+  $("#score-ring").style.strokeDashoffset = 326.73;
+  loadHome();
+  showScreen("home");
+});
+
+// ===== PROGRESS =====
+$("#progress-btn").addEventListener("click", () => loadProgress());
+
+function loadProgress() {
+  const total = sessions.length;
+  const avg = total > 0 ? (sessions.reduce((a, s) => a + (s.overall || 0), 0) / total).toFixed(1) : "--";
+  const best = total > 0 ? Math.max(...sessions.map((s) => s.overall || 0)).toFixed(1) : "--";
+  const streak = calcStreak();
+
+  $("#prog-total").textContent = total;
+  $("#prog-avg").textContent = avg;
+  $("#prog-best").textContent = best;
+  $("#prog-streak").textContent = streak;
+
+  // Trend chart
+  const canvas = $("#trend-chart");
+  const empty = $("#trend-empty");
+  if (total < 2) {
+    canvas.style.display = "none";
+    empty.style.display = "block";
+  } else {
+    canvas.style.display = "block";
+    empty.style.display = "none";
+    drawTrendChart(canvas, sessions.slice(0, 20).reverse());
+  }
+
+  // History list
+  const list = $("#history-list");
+  if (total === 0) {
+    list.innerHTML = '<p class="empty-msg">No sessions yet.</p>';
+  } else {
+    const modeLabels = { open: "Open-Ended", conversation: "Conversation" };
+    const diffLabels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
+    list.innerHTML = sessions
+      .slice(0, 20)
+      .map((s) => `
         <div class="history-card">
-          <div class="history-card-header">
-            <h3>${mins} min session</h3>
-            <span class="badge ${s.difficulty}">${labels[s.difficulty] || s.difficulty}</span>
+          <div class="hc-score">${(s.overall || 0).toFixed(1)}</div>
+          <div class="hc-info">
+            <div class="hc-mode">${modeLabels[s.mode] || s.mode} &middot; ${diffLabels[s.difficulty] || s.difficulty}</div>
+            <div class="hc-meta">${s.date} &middot; ${Math.round((s.duration || 0) / 60)}min &middot; ${s.mode === "conversation" ? (s.scores?.turns || "?") + " turns" : ""}</div>
           </div>
-          <div class="history-date">${date} &middot; ${s.turns} turns</div>
-          <div class="history-scores">
-            ${scores.overall ? `<span class="history-score-item">Overall: <strong>${scores.overall}</strong>/10</span>` : ""}
-            ${scores.clarity ? `<span class="history-score-item">Clarity: <strong>${scores.clarity}</strong></span>` : ""}
-            ${scores.vocabulary ? `<span class="history-score-item">Vocab: <strong>${scores.vocabulary}</strong></span>` : ""}
-            ${scores.confidence ? `<span class="history-score-item">Confidence: <strong>${scores.confidence}</strong></span>` : ""}
-          </div>
-        </div>`;
-      })
+        </div>`)
       .join("");
   }
 
-  showScreen(historyScreen);
+  showScreen("progress");
 }
 
-// ===== Event Listeners =====
-sendBtn.addEventListener("click", () => {
-  sendMessage(textInput.value, "typed");
-});
+function drawTrendChart(canvas, data) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = 200;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
 
-textInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage(textInput.value, "typed");
+  const pad = { t: 20, r: 20, b: 30, l: 40 };
+  const cw = w - pad.l - pad.r;
+  const ch = h - pad.t - pad.b;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Grid lines
+  ctx.strokeStyle = "#2a2a4a";
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 10; i += 2) {
+    const y = pad.t + ch - (i / 10) * ch;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(w - pad.r, y);
+    ctx.stroke();
+    ctx.fillStyle = "#6868880";
+    ctx.font = "11px system-ui";
+    ctx.textAlign = "right";
+    ctx.fillText(i, pad.l - 8, y + 4);
   }
-});
 
-micBtn.addEventListener("mousedown", (e) => {
-  e.preventDefault();
-  startRecording();
-});
+  if (data.length < 2) return;
 
-micBtn.addEventListener("mouseup", () => {
-  if (isRecording) {
-    stopRecording();
-    setTimeout(() => {
-      const text = textInput.value.trim();
-      if (text) {
-        sendMessage(text, "voice");
-        textInput.value = "";
-      }
-    }, 300);
-  }
-});
+  // Line
+  const points = data.map((s, i) => ({
+    x: pad.l + (i / (data.length - 1)) * cw,
+    y: pad.t + ch - ((s.overall || 0) / 10) * ch,
+  }));
 
-micBtn.addEventListener("mouseleave", () => {
-  if (isRecording) {
-    stopRecording();
-    setTimeout(() => {
-      const text = textInput.value.trim();
-      if (text) {
-        sendMessage(text, "voice");
-        textInput.value = "";
-      }
-    }, 300);
-  }
-});
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0, pad.t, 0, h - pad.b);
+  grad.addColorStop(0, "rgba(108, 99, 255, 0.3)");
+  grad.addColorStop(1, "rgba(108, 99, 255, 0)");
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, h - pad.b);
+  points.forEach((p) => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(points[points.length - 1].x, h - pad.b);
+  ctx.fillStyle = grad;
+  ctx.fill();
 
-micBtn.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  startRecording();
-});
+  // Line
+  ctx.beginPath();
+  points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.strokeStyle = "#6C63FF";
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.stroke();
 
-micBtn.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  if (isRecording) {
-    stopRecording();
-    setTimeout(() => {
-      const text = textInput.value.trim();
-      if (text) {
-        sendMessage(text, "voice");
-        textInput.value = "";
-      }
-    }, 300);
-  }
-});
+  // Dots
+  points.forEach((p) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#6C63FF";
+    ctx.fill();
+    ctx.strokeStyle = "#0a0a0f";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+}
 
-backBtn.addEventListener("click", async () => {
-  stopRecording();
-  await endSession();
-  ratingPanel.classList.add("hidden");
-  showScreen(landingScreen);
-});
-
-closeRatingBtn.addEventListener("click", () => {
-  ratingPanel.classList.add("hidden");
-});
-
-historyBtn.addEventListener("click", () => {
-  showHistory();
-});
-
-historyBackBtn.addEventListener("click", () => {
-  showScreen(landingScreen);
-});
+// ===== INIT =====
+init();

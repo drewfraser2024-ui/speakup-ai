@@ -3,6 +3,7 @@
   "outputDirectory": "public",
   "rewrites": [
     { "source": "/api/chat", "destination": "/api/chat" },
-    { "source": "/api/analyze", "destination": "/api/analyze" }
+    { "source": "/api/analyze", "destination": "/api/analyze" },
+    { "source": "/api/daily", "destination": "/api/daily" }
   ]
 }

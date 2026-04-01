@@ -3,184 +3,357 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SpeakUp AI - Speech Trainer</title>
+  <title>SpeakUp AI - Master Your Speech</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
   <div id="app">
-    <!-- Landing Screen -->
-    <div id="landing-screen" class="screen active">
-      <div class="landing-content">
-        <div class="logo-area">
-          <div class="logo-icon">
-            <svg viewBox="0 0 100 100" width="80" height="80">
-              <circle cx="50" cy="50" r="45" fill="none" stroke="url(#grad1)" stroke-width="3"/>
-              <path d="M35 50 Q35 35 50 35 Q65 35 65 50 Q65 65 50 65" fill="none" stroke="url(#grad1)" stroke-width="3" stroke-linecap="round"/>
-              <circle cx="50" cy="50" r="8" fill="url(#grad1)"/>
-              <line x1="58" y1="50" x2="75" y2="50" stroke="url(#grad1)" stroke-width="2" opacity="0.6"/>
-              <line x1="56" y1="43" x2="72" y2="36" stroke="url(#grad1)" stroke-width="2" opacity="0.4"/>
-              <line x1="56" y1="57" x2="72" y2="64" stroke="url(#grad1)" stroke-width="2" opacity="0.4"/>
-              <defs>
-                <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" style="stop-color:#6C63FF"/>
-                  <stop offset="100%" style="stop-color:#FF6584"/>
-                </linearGradient>
-              </defs>
-            </svg>
+
+    <!-- ===== ONBOARDING ===== -->
+    <div id="onboard-screen" class="screen">
+      <div class="onboard-content">
+        <div class="onboard-progress">
+          <div class="ob-bar"><div id="ob-fill" class="ob-fill" style="width:25%"></div></div>
+          <span id="ob-step-label" class="ob-step-label">1 of 4</span>
+        </div>
+
+        <!-- Step 1: Goal -->
+        <div class="ob-step active" data-step="1">
+          <h2>What do you want to improve most?</h2>
+          <p class="ob-sub">Pick one. We'll tailor everything to this.</p>
+          <div class="ob-options">
+            <button class="ob-opt" data-key="goal" data-val="confidence">Confidence</button>
+            <button class="ob-opt" data-key="goal" data-val="vocabulary">Vocabulary</button>
+            <button class="ob-opt" data-key="goal" data-val="clarity">Speaking Clearly</button>
+            <button class="ob-opt" data-key="goal" data-val="social">Social Skills</button>
+            <button class="ob-opt" data-key="goal" data-val="professional">Sounding Professional</button>
           </div>
-          <h1>SpeakUp AI</h1>
-          <p class="tagline">Master your speech. One conversation at a time.</p>
         </div>
 
-        <div class="history-btn-wrap">
-          <button id="history-btn" class="history-btn">View Past Sessions</button>
+        <!-- Step 2: Topics -->
+        <div class="ob-step" data-step="2">
+          <h2>What topics interest you?</h2>
+          <p class="ob-sub">Pick as many as you want.</p>
+          <div class="ob-options multi">
+            <button class="ob-opt" data-key="topics" data-val="science">Science</button>
+            <button class="ob-opt" data-key="topics" data-val="money">Money &amp; Business</button>
+            <button class="ob-opt" data-key="topics" data-val="history">History</button>
+            <button class="ob-opt" data-key="topics" data-val="culture">Culture</button>
+            <button class="ob-opt" data-key="topics" data-val="psychology">Psychology</button>
+            <button class="ob-opt" data-key="topics" data-val="tech">Technology</button>
+            <button class="ob-opt" data-key="topics" data-val="random">Random Facts</button>
+          </div>
+          <button id="ob-topics-next" class="ob-next-btn hidden">Next &rarr;</button>
         </div>
 
-        <div class="difficulty-selector">
-          <h2>Choose Your Challenge</h2>
-          <div class="difficulty-grid">
-            <button class="diff-card" data-difficulty="easy">
-              <div class="diff-icon">&#127793;</div>
-              <h3>Easy</h3>
-              <p>Friendly chat. Gentle feedback. Build confidence at your own pace.</p>
-              <div class="diff-bar"><div class="diff-fill" style="width: 25%"></div></div>
-            </button>
-            <button class="diff-card" data-difficulty="medium">
-              <div class="diff-icon">&#128170;</div>
-              <h3>Medium</h3>
-              <p>Structured topics. Balanced feedback. Push your comfort zone.</p>
-              <div class="diff-bar"><div class="diff-fill" style="width: 50%"></div></div>
-            </button>
-            <button class="diff-card" data-difficulty="hard">
-              <div class="diff-icon">&#128293;</div>
-              <h3>Hard</h3>
-              <p>Complex topics. Strict rating. No shortcuts allowed.</p>
-              <div class="diff-bar"><div class="diff-fill" style="width: 75%"></div></div>
-            </button>
-            <button class="diff-card" data-difficulty="veryhard">
-              <div class="diff-icon">&#9760;&#65039;</div>
-              <h3>Very Hard</h3>
-              <p>Aggressive coaching. Brutal honesty. Only for the brave.</p>
-              <div class="diff-bar"><div class="diff-fill" style="width: 100%"></div></div>
-            </button>
+        <!-- Step 3: Feedback Tone -->
+        <div class="ob-step" data-step="3">
+          <h2>How should I give feedback?</h2>
+          <p class="ob-sub">This changes how blunt the AI is.</p>
+          <div class="ob-options">
+            <button class="ob-opt" data-key="tone" data-val="gentle">Gentle &amp; Encouraging</button>
+            <button class="ob-opt" data-key="tone" data-val="direct">Direct &amp; Honest</button>
+            <button class="ob-opt" data-key="tone" data-val="harsh">Harsh &amp; Unfiltered</button>
+          </div>
+        </div>
+
+        <!-- Step 4: Purpose -->
+        <div class="ob-step" data-step="4">
+          <h2>What's driving you?</h2>
+          <p class="ob-sub">This helps us pick the right prompts.</p>
+          <div class="ob-options">
+            <button class="ob-opt" data-key="purpose" data-val="networking">Better Networking</button>
+            <button class="ob-opt" data-key="purpose" data-val="interviews">Job Interviews</button>
+            <button class="ob-opt" data-key="purpose" data-val="dating">Dating &amp; Social</button>
+            <button class="ob-opt" data-key="purpose" data-val="business">Business &amp; Leadership</button>
+            <button class="ob-opt" data-key="purpose" data-val="general">General Confidence</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Chat Screen -->
-    <div id="chat-screen" class="screen">
-      <header class="chat-header">
-        <button id="back-btn" class="icon-btn" title="Back">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-        </button>
-        <div class="header-info">
-          <h2>SpeakUp AI</h2>
-          <span id="difficulty-badge" class="badge">Easy</span>
+    <!-- ===== HOME SCREEN ===== -->
+    <div id="home-screen" class="screen">
+      <div class="home-content">
+        <div class="home-header">
+          <div>
+            <h1 class="home-greeting" id="home-greeting">Hey there</h1>
+            <p class="home-sub">Ready to level up today?</p>
+          </div>
+          <div class="streak-badge" id="streak-badge">
+            <span class="streak-flame">&#128293;</span>
+            <span class="streak-num" id="home-streak">0</span>
+          </div>
         </div>
-        <div class="header-stats">
-          <div class="stat" title="Overall Score">
-            <span class="stat-label">Score</span>
-            <span id="live-score" class="stat-value">--</span>
+
+        <!-- Daily Section -->
+        <div class="daily-cards">
+          <div class="daily-card word-card">
+            <span class="dc-tag">Word of the Day</span>
+            <h3 id="daily-word">—</h3>
+            <p id="daily-word-def" class="dc-desc">—</p>
+            <p id="daily-word-use" class="dc-example">—</p>
           </div>
-          <div class="stat" title="Messages Sent">
-            <span class="stat-label">Turns</span>
-            <span id="turn-count" class="stat-value">0</span>
+          <div class="daily-card fact-card">
+            <span class="dc-tag">Did You Know?</span>
+            <p id="daily-fact" class="dc-fact">—</p>
           </div>
+        </div>
+
+        <!-- Quick Challenge -->
+        <div id="daily-challenge" class="challenge-banner">
+          <div class="challenge-icon">&#127919;</div>
+          <div class="challenge-text">
+            <span class="challenge-label">Today's Challenge</span>
+            <span id="challenge-desc" class="challenge-desc">Loading...</span>
+          </div>
+        </div>
+
+        <!-- Continue Last -->
+        <button id="continue-btn" class="continue-card hidden">
+          <span class="cont-label">Continue Last Practice</span>
+          <span id="cont-detail" class="cont-detail"></span>
+          <span class="cont-arrow">&rarr;</span>
+        </button>
+
+        <!-- Mode Selection -->
+        <h2 class="section-title">Start Practice</h2>
+        <div class="mode-grid">
+          <button class="mode-card" id="mode-open">
+            <div class="mode-icon-wrap">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </div>
+            <div class="mode-info">
+              <h3>Open-Ended Response</h3>
+              <p>Get a prompt. Speak freely. Get detailed scores.</p>
+            </div>
+            <span class="mode-arrow">&rarr;</span>
+          </button>
+          <button class="mode-card" id="mode-convo">
+            <div class="mode-icon-wrap accent">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
+            <div class="mode-info">
+              <h3>Live Conversation</h3>
+              <p>Real-time back-and-forth. Get rated on natural flow.</p>
+            </div>
+            <span class="mode-arrow">&rarr;</span>
+          </button>
+        </div>
+
+        <!-- Difficulty -->
+        <div class="diff-row">
+          <button class="diff-pill active" data-diff="easy">Easy</button>
+          <button class="diff-pill" data-diff="medium">Medium</button>
+          <button class="diff-pill" data-diff="hard">Hard</button>
+          <button class="diff-pill" data-diff="veryhard">Brutal</button>
+        </div>
+
+        <button id="progress-btn" class="ghost-btn full-w">View Progress &amp; History</button>
+      </div>
+    </div>
+
+    <!-- ===== OPEN-ENDED MODE ===== -->
+    <div id="open-screen" class="screen">
+      <header class="top-bar">
+        <button class="icon-btn back-to-home">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="tb-info">
+          <h2>Open-Ended</h2>
+          <span id="open-diff-badge" class="badge easy">Easy</span>
+        </div>
+        <div class="tb-timer" id="open-timer">0:00</div>
+      </header>
+
+      <div class="open-body">
+        <div id="open-prompt-card" class="prompt-card">
+          <span class="prompt-label">Your Prompt</span>
+          <p id="open-prompt-text" class="prompt-text">Loading...</p>
+          <button id="open-skip-btn" class="skip-btn">Skip &rarr;</button>
+        </div>
+        <div id="open-transcript" class="transcript-area">
+          <p class="transcript-placeholder">Your words will appear here as you speak...</p>
+        </div>
+      </div>
+
+      <div class="open-controls">
+        <button id="open-mic-btn" class="big-mic-btn">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+          <span class="mic-label" id="open-mic-label">Tap to Start</span>
+        </button>
+        <button id="open-done-btn" class="done-btn hidden">Finish &amp; Get Scored</button>
+      </div>
+    </div>
+
+    <!-- ===== CONVERSATION MODE ===== -->
+    <div id="convo-screen" class="screen">
+      <header class="top-bar">
+        <button class="icon-btn back-to-home" id="convo-back-btn">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="tb-info">
+          <h2>Conversation</h2>
+          <span id="convo-diff-badge" class="badge easy">Easy</span>
+        </div>
+        <div class="tb-stats">
+          <span class="mini-stat"><span id="convo-turns">0</span> turns</span>
         </div>
       </header>
 
-      <div id="chat-messages" class="chat-messages">
-        <div class="system-msg">
-          <p>Session started. Speak or type to begin your training.</p>
-        </div>
-      </div>
-
-      <!-- Rating Panel (slides up when rating arrives) -->
-      <div id="rating-panel" class="rating-panel hidden">
-        <div class="rating-header">
-          <h3>Speech Rating</h3>
-          <button id="close-rating" class="icon-btn small">&times;</button>
-        </div>
-        <div class="rating-bars">
-          <div class="rating-row">
-            <span>Clarity</span>
-            <div class="bar-track"><div id="bar-clarity" class="bar-fill"></div></div>
-            <span id="score-clarity" class="score-num">-</span>
-          </div>
-          <div class="rating-row">
-            <span>Vocabulary</span>
-            <div class="bar-track"><div id="bar-vocabulary" class="bar-fill"></div></div>
-            <span id="score-vocabulary" class="score-num">-</span>
-          </div>
-          <div class="rating-row">
-            <span>Confidence</span>
-            <div class="bar-track"><div id="bar-confidence" class="bar-fill"></div></div>
-            <span id="score-confidence" class="score-num">-</span>
-          </div>
-          <div class="rating-row">
-            <span>Structure</span>
-            <div class="bar-track"><div id="bar-structure" class="bar-fill"></div></div>
-            <span id="score-structure" class="score-num">-</span>
-          </div>
-          <div class="rating-row">
-            <span>Filler Words</span>
-            <div class="bar-track"><div id="bar-fillerWords" class="bar-fill"></div></div>
-            <span id="score-fillerWords" class="score-num">-</span>
-          </div>
-          <div class="rating-row overall">
-            <span>Overall</span>
-            <div class="bar-track"><div id="bar-overall" class="bar-fill"></div></div>
-            <span id="score-overall" class="score-num">-</span>
-          </div>
-        </div>
-        <p id="rating-tip" class="rating-tip"></p>
-      </div>
+      <div id="convo-messages" class="chat-messages"></div>
 
       <div class="chat-input-area">
-        <div id="speech-status" class="speech-status hidden">
-          <div class="pulse-ring"></div>
-          <span>Listening...</span>
+        <div id="convo-speech-status" class="speech-status hidden">
+          <div class="pulse-ring"></div><span>Listening...</span>
         </div>
         <div class="input-row">
-          <button id="mic-btn" class="mic-btn" title="Hold to speak">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+          <button id="convo-mic-btn" class="mic-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
               <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
             </svg>
           </button>
-          <input type="text" id="text-input" placeholder="Type or hold mic to speak..." autocomplete="off">
-          <button id="send-btn" class="send-btn" title="Send">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-            </svg>
+          <input type="text" id="convo-input" placeholder="Type or hold mic to speak..." autocomplete="off">
+          <button id="convo-send-btn" class="send-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
         </div>
+        <button id="convo-end-btn" class="end-session-btn">End Session &amp; Get Scored</button>
       </div>
     </div>
-  </div>
 
-    <!-- History Screen -->
-    <div id="history-screen" class="screen">
-      <header class="chat-header">
-        <button id="history-back-btn" class="icon-btn" title="Back">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-        </button>
-        <div class="header-info">
-          <h2>Session History</h2>
+    <!-- ===== RESULTS SCREEN ===== -->
+    <div id="results-screen" class="screen">
+      <div class="results-body">
+        <div class="results-header">
+          <h2>Session Complete</h2>
+          <div class="overall-score-circle">
+            <svg viewBox="0 0 120 120" width="120" height="120">
+              <circle cx="60" cy="60" r="52" fill="none" stroke="#1a1a2e" stroke-width="10"/>
+              <circle id="score-ring" cx="60" cy="60" r="52" fill="none" stroke="url(#scoreGrad)" stroke-width="10"
+                stroke-dasharray="326.73" stroke-dashoffset="326.73" stroke-linecap="round"
+                transform="rotate(-90 60 60)"/>
+              <defs>
+                <linearGradient id="scoreGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" style="stop-color:#6C63FF"/><stop offset="100%" style="stop-color:#FF6584"/>
+                </linearGradient>
+              </defs>
+            </svg>
+            <span id="overall-num" class="overall-num">0</span>
+          </div>
+          <p id="overall-label" class="overall-label">Analyzing...</p>
         </div>
-      </header>
-      <div id="history-list" class="history-list">
-        <div class="system-msg"><p>No sessions yet. Start a conversation to build your history.</p></div>
+
+        <div class="score-section">
+          <div class="score-bar-row" data-cat="clarity">
+            <div class="sb-label"><span class="sb-name">Clarity</span><span class="sb-desc">Did you make sense?</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+          <div class="score-bar-row" data-cat="confidence">
+            <div class="sb-label"><span class="sb-name">Confidence</span><span class="sb-desc">Did you sound certain?</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+          <div class="score-bar-row" data-cat="flow">
+            <div class="sb-label"><span class="sb-name">Flow</span><span class="sb-desc">Did ideas move smoothly?</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+          <div class="score-bar-row" data-cat="conciseness">
+            <div class="sb-label"><span class="sb-name">Conciseness</span><span class="sb-desc">Did you ramble?</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+          <div class="score-bar-row" data-cat="vocabulary">
+            <div class="sb-label"><span class="sb-name">Vocabulary</span><span class="sb-desc">Word variety &amp; strength</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+          <div class="score-bar-row" data-cat="engagement">
+            <div class="sb-label"><span class="sb-name">Engagement</span><span class="sb-desc">Did you sound interesting?</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+          <div class="score-bar-row" data-cat="fillerWords">
+            <div class="sb-label"><span class="sb-name">Filler Words</span><span class="sb-desc">um, like, you know...</span></div>
+            <div class="sb-track"><div class="sb-fill"></div></div><span class="sb-num">-</span>
+          </div>
+        </div>
+
+        <div class="sw-section">
+          <div class="sw-card strongest">
+            <span class="sw-tag">&#11088; Strongest</span>
+            <span id="strongest-area" class="sw-value">--</span>
+          </div>
+          <div class="sw-card weakest">
+            <span class="sw-tag">&#9888;&#65039; Weakest</span>
+            <span id="weakest-area" class="sw-value">--</span>
+          </div>
+        </div>
+
+        <div class="feedback-section">
+          <h3>Specific Fixes</h3>
+          <ul id="feedback-list" class="feedback-list"></ul>
+        </div>
+
+        <div id="filler-section" class="filler-section hidden">
+          <h3>Filler Word Breakdown</h3>
+          <div id="filler-breakdown" class="filler-breakdown"></div>
+        </div>
+
+        <div id="wording-section" class="wording-section hidden">
+          <h3>Better Wording Suggestions</h3>
+          <div id="wording-list" class="wording-list"></div>
+        </div>
+
+        <div id="transcript-section" class="transcript-section">
+          <h3>Your Transcript</h3>
+          <div id="results-transcript" class="results-transcript"></div>
+        </div>
+
+        <div class="next-challenge-card">
+          <span class="nc-tag">&#127919; Next Challenge</span>
+          <p id="next-challenge-text" class="challenge-desc">--</p>
+        </div>
+
+        <div class="results-actions">
+          <button id="results-retry" class="primary-btn">Practice Again</button>
+          <button id="results-home" class="ghost-btn">Home</button>
+        </div>
       </div>
     </div>
-  </div>
 
+    <!-- ===== PROGRESS SCREEN ===== -->
+    <div id="progress-screen" class="screen">
+      <header class="top-bar">
+        <button class="icon-btn back-to-home">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="tb-info"><h2>Your Progress</h2></div>
+      </header>
+      <div class="progress-body">
+        <div class="trend-section">
+          <h3>Score Trend</h3>
+          <canvas id="trend-chart" width="600" height="200"></canvas>
+          <p id="trend-empty" class="empty-msg">Complete a few sessions to see your trend.</p>
+        </div>
+        <div class="stats-grid">
+          <div class="sg-card"><span class="sg-num" id="prog-total">0</span><span class="sg-label">Sessions</span></div>
+          <div class="sg-card"><span class="sg-num" id="prog-avg">--</span><span class="sg-label">Avg Score</span></div>
+          <div class="sg-card"><span class="sg-num" id="prog-best">--</span><span class="sg-label">Best</span></div>
+          <div class="sg-card"><span class="sg-num" id="prog-streak">0</span><span class="sg-label">Streak</span></div>
+        </div>
+        <h3 class="section-title">Recent Sessions</h3>
+        <div id="history-list" class="history-list"></div>
+      </div>
+    </div>
+
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
