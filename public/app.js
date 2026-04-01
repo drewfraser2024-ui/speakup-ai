@@ -6,11 +6,11 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const SUPABASE_URL = window.__SUPABASE_URL__ || "";
 const SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY__ || "";
 
-let supabase = null;
+let supabaseClient = null;
 let useSupabase = false;
 
 if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase) {
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   useSupabase = true;
   console.log("Supabase connected");
 }
@@ -34,7 +34,7 @@ function saveLocalSession(session) {
 async function saveSession(sessionData) {
   if (useSupabase) {
     try {
-      await supabase.from("sessions").insert(sessionData);
+      await supabaseClient.from("sessions").insert(sessionData);
     } catch (err) {
       console.error("Supabase save error:", err);
       saveLocalSession(sessionData);
@@ -47,7 +47,7 @@ async function saveSession(sessionData) {
 async function loadSessions() {
   if (useSupabase) {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from("sessions")
         .select("*")
         .order("created_at", { ascending: false })
