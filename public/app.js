@@ -23,6 +23,98 @@ let lastSessionMode = load("lastMode", null);
 const today = new Date().toISOString().slice(0, 10);
 let dailyContent = load("daily_" + today, null);
 
+// ===== SPEECH ERROR DETECTION =====
+// Detects stutters, repetitions, false starts, self-corrections
+function analyzeSpeechErrors(text) {
+  const errors = {
+    stutters: [],       // "I I I think" → repeated words
+    repetitions: [],    // "the the thing"
+    falseStarts: [],    // "I was go— I was going"
+    fillerSounds: [],   // "uh", "um", "er", "ah"
+    selfCorrections: [],// "I mean", "wait no", "sorry I meant"
+    totalErrors: 0,
+  };
+
+  if (!text || text.trim().length === 0) return errors;
+
+  const words = text.toLowerCase().split(/\s+/);
+
+  // Detect repeated words (stutters): "I I I", "the the the"
+  let i = 0;
+  while (i < words.length) {
+    let repeatCount = 1;
+    while (i + repeatCount < words.length && words[i + repeatCount] === words[i]) {
+      repeatCount++;
+    }
+    if (repeatCount >= 2) {
+      errors.stutters.push({ word: words[i], count: repeatCount, position: i });
+    }
+    i += repeatCount;
+  }
+
+  // Detect filler sounds
+  const fillerSounds = ["uh", "um", "er", "ah", "uhh", "umm", "hmm", "hm", "ehh"];
+  words.forEach((w, idx) => {
+    const clean = w.replace(/[^a-z]/g, "");
+    if (fillerSounds.includes(clean)) {
+      errors.fillerSounds.push({ sound: clean, position: idx });
+    }
+  });
+
+  // Detect self-correction phrases
+  const correctionPhrases = ["i mean", "wait no", "sorry i meant", "let me rephrase", "what i meant", "no wait", "actually no", "hold on", "scratch that"];
+  const lowerText = text.toLowerCase();
+  correctionPhrases.forEach((phrase) => {
+    let pos = 0;
+    while ((pos = lowerText.indexOf(phrase, pos)) !== -1) {
+      errors.selfCorrections.push({ phrase, position: pos });
+      pos += phrase.length;
+    }
+  });
+
+  // Detect repeated short phrases (2-3 word repetitions)
+  for (let j = 0; j < words.length - 3; j++) {
+    const twoWord = words[j] + " " + words[j + 1];
+    const nextTwo = words[j + 2] + " " + (words[j + 3] || "");
+    if (twoWord === nextTwo && twoWord.length > 3) {
+      errors.repetitions.push({ phrase: twoWord, position: j });
+    }
+  }
+
+  errors.totalErrors = errors.stutters.length + errors.fillerSounds.length +
+    errors.selfCorrections.length + errors.repetitions.length;
+
+  return errors;
+}
+
+// Build a summary string to pass to AI
+function speechErrorSummary(errors) {
+  if (errors.totalErrors === 0) return "";
+
+  let summary = "\nSPEECH ERROR DETECTION (detected from audio transcription):";
+
+  if (errors.stutters.length > 0) {
+    summary += `\n- STUTTERS (${errors.stutters.length}): ` +
+      errors.stutters.map((s) => `"${s.word}" repeated ${s.count}x`).join(", ");
+  }
+  if (errors.fillerSounds.length > 0) {
+    const counts = {};
+    errors.fillerSounds.forEach((f) => { counts[f.sound] = (counts[f.sound] || 0) + 1; });
+    summary += `\n- FILLER SOUNDS (${errors.fillerSounds.length}): ` +
+      Object.entries(counts).map(([s, c]) => `"${s}" x${c}`).join(", ");
+  }
+  if (errors.selfCorrections.length > 0) {
+    summary += `\n- SELF-CORRECTIONS (${errors.selfCorrections.length}): ` +
+      errors.selfCorrections.map((s) => `"${s.phrase}"`).join(", ");
+  }
+  if (errors.repetitions.length > 0) {
+    summary += `\n- PHRASE REPETITIONS (${errors.repetitions.length}): ` +
+      errors.repetitions.map((r) => `"${r.phrase}"`).join(", ");
+  }
+
+  return summary;
+}
+
 // ===== VOICE METRICS (Web Audio API) =====
 let audioContext = null;
 let audioAnalyser = null;
@@ -481,7 +573,8 @@ $("#open-done-btn").addEventListener("click", async () => {
   stopAudioAnalysis();
 
   const prompt = $("#open-prompt-text").textContent;
-  await analyzeAndShowResults(text, "open", prompt, voiceMetrics);
+  const speechErrors = analyzeSpeechErrors(text);
+  await analyzeAndShowResults(text, "open", prompt, voiceMetrics, speechErrors);
 });
 
 // ===== CONVERSATION MODE =====
@@ -565,7 +658,12 @@ async function sendConvoMessage(text, method = "typed") {
   }
   stopAudioAnalysis();
 
+  // Detect speech errors in this turn
+  const turnErrors = analyzeSpeechErrors(text);
+  const errorContext = speechErrorSummary(turnErrors);
+
   addChatMsg("user", text, method);
+  // Send the raw text as the user message, but include error context as a system hint
   convoMessages.push({ role: "user", content: text });
   convoTurnCount++;
   convoTranscript += text + " ";
@@ -578,7 +676,11 @@ async function sendConvoMessage(text, method = "typed") {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: convoMessages, difficulty, profile, mode: "conversation" }),
+      body: JSON.stringify({
+        messages: convoMessages,
+        difficulty, profile, mode: "conversation",
+        speechErrors: turnErrors.totalErrors > 0 ? errorContext : null,
+      }),
     });
     const data = await res.json();
     hideTyping();
@@ -646,7 +748,8 @@ $("#convo-end-btn").addEventListener("click", async () => {
     wordCount,
   } : null;
 
-  await analyzeAndShowResults(convoTranscript, "conversation", null, voiceMetrics);
+  const speechErrors = analyzeSpeechErrors(convoTranscript);
+  await analyzeAndShowResults(convoTranscript, "conversation", null, voiceMetrics, speechErrors);
 });
 
 // Continue button
@@ -656,7 +759,7 @@ $("#continue-btn").addEventListener("click", () => {
 });
 
 // ===== ANALYSIS & RESULTS =====
-async function analyzeAndShowResults(text, mode, prompt, voiceMetrics) {
+async function analyzeAndShowResults(text, mode, prompt, voiceMetrics, speechErrors) {
   showScreen("results");
   $("#overall-num").textContent = "...";
   $("#overall-label").textContent = "Analyzing your speech...";
@@ -671,7 +774,11 @@ async function analyzeAndShowResults(text, mode, prompt, voiceMetrics) {
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, difficulty, mode, prompt, profile, voiceMetrics }),
+      body: JSON.stringify({
+        text, difficulty, mode, prompt, profile, voiceMetrics,
+        speechErrors: speechErrors ? speechErrorSummary(speechErrors) : null,
+        speechErrorData: speechErrors || null,
+      }),
     });
     const data = await res.json();
 
@@ -774,14 +881,57 @@ function displayResults(data, transcript, mode) {
     wordingSection.classList.add("hidden");
   }
 
-  // Transcript with highlighted fillers
+  // Transcript with highlighted fillers AND stutters
   const fillerWords = ["um", "uh", "like", "you know", "basically", "literally", "actually", "so", "right", "i mean"];
+  const stutterSounds = ["uh", "um", "er", "ah", "uhh", "umm", "hmm", "ehh"];
   let highlighted = transcript;
+
+  // Highlight filler words
   fillerWords.forEach((fw) => {
     const regex = new RegExp(`\\b(${fw})\\b`, "gi");
     highlighted = highlighted.replace(regex, '<span class="filler-highlight">$1</span>');
   });
+
+  // Highlight stutters (repeated words like "I I I")
+  highlighted = highlighted.replace(/\b(\w+)(\s+\1){1,}\b/gi, (match) => {
+    return `<span class="stutter-highlight">${match}</span>`;
+  });
+
   $("#results-transcript").innerHTML = highlighted || "<em>No transcript available.</em>";
+
+  // Stutter/error breakdown section
+  const stutterSection = $("#stutter-section");
+  const stutterDiv = $("#stutter-breakdown");
+  const errors = analyzeSpeechErrors(transcript);
+  if (errors.totalErrors > 0) {
+    stutterSection.classList.remove("hidden");
+    let html = "";
+    if (errors.stutters.length > 0) {
+      html += errors.stutters.map((s) =>
+        `<span class="stutter-chip repeat">"${s.word}" repeated ${s.count}x</span>`
+      ).join("");
+    }
+    if (errors.fillerSounds.length > 0) {
+      const counts = {};
+      errors.fillerSounds.forEach((f) => { counts[f.sound] = (counts[f.sound] || 0) + 1; });
+      html += Object.entries(counts).map(([s, c]) =>
+        `<span class="stutter-chip filler">"${s}" &times;${c}</span>`
+      ).join("");
+    }
+    if (errors.selfCorrections.length > 0) {
+      html += errors.selfCorrections.map((s) =>
+        `<span class="stutter-chip correction">"${s.phrase}"</span>`
+      ).join("");
+    }
+    if (errors.repetitions.length > 0) {
+      html += errors.repetitions.map((r) =>
+        `<span class="stutter-chip repeat">"${r.phrase}" repeated</span>`
+      ).join("");
+    }
+    stutterDiv.innerHTML = html;
+  } else {
+    stutterSection.classList.add("hidden");
+  }
 
   // Voice metrics display
   if (data.voiceAnalysis) {

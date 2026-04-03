@@ -18,7 +18,7 @@ const DIFF_STRICTNESS = {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { text, difficulty, mode, prompt, profile, voiceMetrics } = req.body;
+  const { text, difficulty, mode, prompt, profile, voiceMetrics, speechErrors } = req.body;
   const tone = TONE_MAP[profile?.tone] || TONE_MAP.direct;
   const strictness = DIFF_STRICTNESS[difficulty] || DIFF_STRICTNESS.easy;
 
@@ -37,7 +37,14 @@ ${voiceMetrics.silenceRatio ? `- Silence ratio: ${voiceMetrics.silenceRatio}% of
 USE THESE METRICS to inform your confidence, flow, and engagement scores. Include voice-specific feedback in fixes.`;
   }
 
-  const systemPrompt = `You are an elite speech analyst. Analyze the user's speech transcript AND voice metrics (if provided) to give comprehensive feedback.
+  // Speech error context
+  let errorContext = "";
+  if (speechErrors) {
+    errorContext = `\n${speechErrors}
+\nIMPORTANT: Use these detected speech errors in your analysis. Stutters and repeated words should heavily affect the confidence and flow scores. Filler sounds affect the fillerWords score. Self-corrections indicate lack of preparation and affect clarity. Reference specific stutters and errors in your fixes.`;
+  }
+
+  const systemPrompt = `You are an elite speech analyst. Analyze the user's speech transcript, voice metrics (if provided), AND speech errors (stutters, repetitions, filler sounds) to give comprehensive feedback.
 
 TONE: ${tone}
 STRICTNESS: ${strictness}
@@ -83,7 +90,10 @@ IMPORTANT RULES FOR FEEDBACK:
 - For fixes: don't just say "you used filler words." Say "You used 'like' 9 times in 45 seconds. Most appeared when searching for your next point. Replace that pause with silence."
 - For wording suggestions: find weak/vague phrases and suggest specific stronger alternatives
 - For the challenge: make it measurable. "Use fewer than 3 filler words" not "try to use fewer filler words"
-- The overall score should be a weighted average favoring clarity, confidence, and conciseness`;
+- The overall score should be a weighted average favoring clarity, confidence, and conciseness
+- If speech errors (stutters, repetitions) are detected, ALWAYS reference them specifically: "You stuttered on 'I I I think' — this suggests uncertainty. Pause, collect your thought, then speak."
+- Stutters should significantly lower confidence and flow scores
+- Distinguish between intentional repetition for emphasis vs involuntary stuttering${errorContext}`;
 
   try {
     const response = await client.messages.create({

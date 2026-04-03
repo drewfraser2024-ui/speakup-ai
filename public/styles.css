@@ -193,6 +193,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .filler-chip{padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:50px;font-size:.82rem}
 .filler-chip strong{color:var(--accent);margin-left:4px}
 
+/* Stutter Section */
+.stutter-section{margin-bottom:24px}
+.stutter-section h3{font-size:.95rem;margin-bottom:12px}
+.stutter-breakdown{display:flex;flex-wrap:wrap;gap:8px}
+.stutter-chip{padding:8px 14px;border-radius:50px;font-size:.82rem;border:1px solid var(--border)}
+.stutter-chip.repeat{background:rgba(249,115,22,.1);border-color:rgba(249,115,22,.3);color:var(--hard)}
+.stutter-chip.filler{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--danger)}
+.stutter-chip.correction{background:rgba(251,191,36,.1);border-color:rgba(251,191,36,.3);color:var(--warning)}
+
+/* Transcript highlights */
+.results-transcript .stutter-highlight{color:var(--hard);font-weight:600;background:rgba(249,115,22,.15);padding:1px 4px;border-radius:3px}
+
 /* Wording Suggestions */
 .wording-section{margin-bottom:24px}
 .wording-list{display:flex;flex-direction:column;gap:8px}
