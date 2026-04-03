@@ -18,17 +18,33 @@ const DIFF_STRICTNESS = {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { text, difficulty, mode, prompt, profile } = req.body;
+  const { text, difficulty, mode, prompt, profile, voiceMetrics } = req.body;
   const tone = TONE_MAP[profile?.tone] || TONE_MAP.direct;
   const strictness = DIFF_STRICTNESS[difficulty] || DIFF_STRICTNESS.easy;
 
-  const systemPrompt = `You are an elite speech analyst. Analyze the user's speech transcript and return detailed, actionable feedback.
+  // Build voice metrics context
+  let voiceContext = "";
+  if (voiceMetrics) {
+    voiceContext = `\nVOICE METRICS (from real-time audio analysis):
+- Speaking pace: ${voiceMetrics.wpm} words per minute (ideal: 130-170 WPM for conversation, 120-150 for presentations)
+- Average volume level: ${voiceMetrics.avgVolume}/100 (higher = louder/more projected)
+- Number of pauses/silence gaps: ${voiceMetrics.pauseCount}
+- Total duration: ${voiceMetrics.durationSec} seconds
+- Total words: ${voiceMetrics.wordCount}
+${voiceMetrics.volumeVariation ? `- Volume variation: ${voiceMetrics.volumeVariation} (higher = more expressive, lower = monotone)` : ""}
+${voiceMetrics.silenceRatio ? `- Silence ratio: ${voiceMetrics.silenceRatio}% of time was silent` : ""}
+
+USE THESE METRICS to inform your confidence, flow, and engagement scores. Include voice-specific feedback in fixes.`;
+  }
+
+  const systemPrompt = `You are an elite speech analyst. Analyze the user's speech transcript AND voice metrics (if provided) to give comprehensive feedback.
 
 TONE: ${tone}
 STRICTNESS: ${strictness}
 MODE: ${mode === "open" ? "Open-ended response to a prompt" : "Conversation mode (user side of dialogue)"}
 ${prompt ? `PROMPT GIVEN: "${prompt}"` : ""}
 ${profile?.goal ? `USER'S GOAL: ${profile.goal}` : ""}
+${voiceContext}
 
 You MUST respond with ONLY valid JSON in this exact format:
 {
@@ -53,7 +69,12 @@ You MUST respond with ONLY valid JSON in this exact format:
     {"original": "<weak phrase they used>", "better": "<stronger alternative>"},
     ...up to 3
   ],
-  "nextChallenge": "<one specific, measurable challenge for their next session based on their weakest area>"
+  "nextChallenge": "<one specific, measurable challenge for their next session based on their weakest area>",
+  "voiceAnalysis": {
+    "paceNote": "<feedback on their speaking pace based on WPM, or null if no voice metrics>",
+    "volumeNote": "<feedback on their volume/projection, or null>",
+    "pauseNote": "<feedback on their pausing patterns, or null>"
+  }
 }
 
 IMPORTANT RULES FOR FEEDBACK:

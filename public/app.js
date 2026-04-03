@@ -9,7 +9,7 @@ function load(key, fallback) { try { return JSON.parse(localStorage.getItem("su_
 let profile = load("profile", null);
 let sessions = load("sessions", []);
 let difficulty = load("difficulty", "easy");
-let currentMode = null; // "open" or "convo"
+let currentMode = null;
 let messages = [];
 let turnCount = 0;
 let openTranscript = "";
@@ -20,9 +20,130 @@ let recognition = null;
 let sessionStartTime = null;
 let lastSessionMode = load("lastMode", null);
 
-// Daily content seeded by date
 const today = new Date().toISOString().slice(0, 10);
 let dailyContent = load("daily_" + today, null);
+
+// ===== VOICE METRICS (Web Audio API) =====
+let audioContext = null;
+let audioAnalyser = null;
+let audioStream = null;
+let volumeSamples = [];
+let silenceSegments = 0;
+let lastWasSilent = false;
+const SILENCE_THRESHOLD = 15;
+
+function initAudioAnalysis(stream) {
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  audioAnalyser = audioContext.createAnalyser();
+  audioAnalyser.fftSize = 256;
+  const source = audioContext.createMediaStreamSource(stream);
+  source.connect(audioAnalyser);
+  audioStream = stream;
+  volumeSamples = [];
+  silenceSegments = 0;
+  lastWasSilent = false;
+  collectAudioData();
+}
+
+function collectAudioData() {
+  if (!audioAnalyser || !isRecording) return;
+  const data = new Uint8Array(audioAnalyser.frequencyBinCount);
+  audioAnalyser.getByteFrequencyData(data);
+  const avg = data.reduce((a, b) => a + b, 0) / data.length;
+  volumeSamples.push(avg);
+
+  if (avg < SILENCE_THRESHOLD) {
+    if (!lastWasSilent) silenceSegments++;
+    lastWasSilent = true;
+  } else {
+    lastWasSilent = false;
+  }
+
+  if (isRecording) requestAnimationFrame(collectAudioData);
+}
+
+function getVoiceMetrics(durationSec, wordCount) {
+  if (volumeSamples.length === 0) return null;
+  const avgVolume = volumeSamples.reduce((a, b) => a + b, 0) / volumeSamples.length;
+  const maxVolume = Math.max(...volumeSamples);
+  const minVolume = Math.min(...volumeSamples.filter((v) => v > SILENCE_THRESHOLD));
+  const volumeVariation = maxVolume - (minVolume || 0);
+
+  // Words per minute
+  const wpm = durationSec > 0 ? Math.round((wordCount / durationSec) * 60) : 0;
+
+  // Silence ratio
+  const silentFrames = volumeSamples.filter((v) => v < SILENCE_THRESHOLD).length;
+  const silenceRatio = silentFrames / volumeSamples.length;
+
+  return {
+    avgVolume: Math.round(avgVolume),
+    volumeVariation: Math.round(volumeVariation),
+    wpm,
+    silenceRatio: Math.round(silenceRatio * 100),
+    pauseCount: silenceSegments,
+    durationSec,
+    wordCount,
+  };
+}
+
+function stopAudioAnalysis() {
+  if (audioStream) {
+    audioStream.getTracks().forEach((t) => t.stop());
+    audioStream = null;
+  }
+  if (audioContext && audioContext.state !== "closed") {
+    audioContext.close().catch(() => {});
+    audioContext = null;
+  }
+  audioAnalyser = null;
+}
+
+// ===== TEXT-TO-SPEECH (AI Voice) =====
+let ttsEnabled = true;
+let ttsVoice = null;
+
+function initTTS() {
+  const synth = window.speechSynthesis;
+  if (!synth) { ttsEnabled = false; return; }
+
+  function pickVoice() {
+    const voices = synth.getVoices();
+    // Prefer a natural English voice
+    ttsVoice = voices.find((v) => v.name.includes("Samantha")) ||
+               voices.find((v) => v.name.includes("Google") && v.lang.startsWith("en")) ||
+               voices.find((v) => v.name.includes("Daniel")) ||
+               voices.find((v) => v.lang.startsWith("en") && v.localService) ||
+               voices.find((v) => v.lang.startsWith("en")) ||
+               voices[0];
+  }
+
+  pickVoice();
+  synth.onvoiceschanged = pickVoice;
+}
+
+function speak(text) {
+  if (!ttsEnabled || !window.speechSynthesis) return Promise.resolve();
+  return new Promise((resolve) => {
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (ttsVoice) utterance.voice = ttsVoice;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    utterance.onend = resolve;
+    utterance.onerror = resolve;
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+function stopSpeaking() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+}
+
+initTTS();
 
 // ===== SCREENS =====
 const screens = {
@@ -35,6 +156,7 @@ const screens = {
 };
 
 function showScreen(name) {
+  stopSpeaking();
   Object.values(screens).forEach((s) => s.classList.remove("active"));
   screens[name].classList.add("active");
 }
@@ -65,11 +187,8 @@ $$(".ob-opt").forEach((btn) => {
     if (isMulti) {
       btn.classList.toggle("selected");
       if (!obData.topics) obData.topics = [];
-      if (btn.classList.contains("selected")) {
-        obData.topics.push(val);
-      } else {
-        obData.topics = obData.topics.filter((t) => t !== val);
-      }
+      if (btn.classList.contains("selected")) obData.topics.push(val);
+      else obData.topics = obData.topics.filter((t) => t !== val);
       const nextBtn = $("#ob-topics-next");
       if (obData.topics.length > 0) nextBtn.classList.remove("hidden");
       else nextBtn.classList.add("hidden");
@@ -101,17 +220,13 @@ function advanceOnboarding() {
 
 // ===== HOME =====
 async function loadHome() {
-  // Greeting
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   $("#home-greeting").textContent = greet;
 
-  // Stats
   const streak = calcStreak();
   $("#home-streak").textContent = streak;
-  $("#prog-streak")  && ($("#prog-streak").textContent = streak);
 
-  // Daily content
   if (!dailyContent) {
     dailyContent = await fetchDailyContent();
     store("daily_" + today, dailyContent);
@@ -124,7 +239,6 @@ async function loadHome() {
     $("#challenge-desc").textContent = dailyContent.challenge || "Complete one speaking session today.";
   }
 
-  // Continue last
   if (lastSessionMode) {
     $("#continue-btn").classList.remove("hidden");
     $("#cont-detail").textContent = lastSessionMode === "open" ? "Open-Ended" : "Conversation";
@@ -141,8 +255,7 @@ async function fetchDailyContent() {
     return await res.json();
   } catch {
     return {
-      word: "Articulate",
-      definition: "Having or showing the ability to speak fluently and express oneself clearly.",
+      word: "Articulate", definition: "Having the ability to speak fluently and express oneself clearly.",
       example: "She gave an articulate presentation that captivated the audience.",
       fact: "The average person speaks about 16,000 words per day.",
       challenge: "Use zero filler words in your next 60-second response.",
@@ -156,11 +269,8 @@ function calcStreak() {
   const d = new Date();
   for (let i = 0; i < 365; i++) {
     const dateStr = d.toISOString().slice(0, 10);
-    if (sessions.some((s) => s.date === dateStr)) {
-      streak++;
-    } else if (i > 0) {
-      break;
-    }
+    if (sessions.some((s) => s.date === dateStr)) streak++;
+    else if (i > 0) break;
     d.setDate(d.getDate() - 1);
   }
   return streak;
@@ -186,13 +296,15 @@ function setupBackButtons() {
     btn.addEventListener("click", () => {
       stopTimer();
       stopRecording();
+      stopAudioAnalysis();
+      stopSpeaking();
       loadHome();
       showScreen("home");
     });
   });
 }
 
-// ===== SPEECH RECOGNITION =====
+// ===== SPEECH RECOGNITION + AUDIO ANALYSIS =====
 function createRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
@@ -203,9 +315,17 @@ function createRecognition() {
   return rec;
 }
 
-function startRecording(onResult, onEnd, statusEl, micEl) {
+async function startRecordingWithAudio(onResult, onEnd, statusEl, micEl) {
   if (!recognition) recognition = createRecognition();
   if (!recognition) return false;
+
+  // Start audio analysis
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    initAudioAnalysis(stream);
+  } catch (e) {
+    console.warn("Could not access microphone for audio analysis:", e);
+  }
 
   let finalTranscript = "";
   recognition.onresult = (e) => {
@@ -294,7 +414,9 @@ function getRandomPrompt() {
 
 $("#mode-open").addEventListener("click", () => startOpenMode());
 $("#open-skip-btn").addEventListener("click", () => {
-  $("#open-prompt-text").textContent = getRandomPrompt();
+  const prompt = getRandomPrompt();
+  $("#open-prompt-text").textContent = prompt;
+  speak(prompt); // AI reads the new prompt aloud
 });
 
 function startOpenMode() {
@@ -307,31 +429,35 @@ function startOpenMode() {
   const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
   $("#open-diff-badge").textContent = labels[difficulty];
   $("#open-diff-badge").className = `badge ${difficulty}`;
-  $("#open-prompt-text").textContent = getRandomPrompt();
+  const prompt = getRandomPrompt();
+  $("#open-prompt-text").textContent = prompt;
   $("#open-transcript").innerHTML = '<p class="transcript-placeholder">Your words will appear here as you speak...</p>';
   $("#open-done-btn").classList.add("hidden");
   $("#open-mic-label").textContent = "Tap to Start";
   $("#open-timer").textContent = "0:00";
 
   showScreen("open");
+
+  // AI reads the prompt aloud
+  speak(prompt);
 }
 
 let openRecording = false;
 $("#open-mic-btn").addEventListener("click", () => {
   if (!openRecording) {
+    stopSpeaking(); // Stop AI voice before user speaks
     openRecording = true;
     $("#open-mic-label").textContent = "Recording...";
     $("#open-done-btn").classList.remove("hidden");
     startTimer();
 
-    startRecording(
+    startRecordingWithAudio(
       (final, interim) => {
         openTranscript = final;
         $("#open-transcript").innerHTML =
           `<p>${final}<span style="color:var(--text2)">${interim}</span></p>`;
       },
-      null,
-      null,
+      null, null,
       $("#open-mic-btn")
     );
   } else {
@@ -348,8 +474,14 @@ $("#open-done-btn").addEventListener("click", async () => {
   stopTimer();
   const text = openTranscript.trim();
   if (!text) return;
+
+  // Capture voice metrics before stopping audio
+  const wordCount = text.split(/\s+/).length;
+  const voiceMetrics = getVoiceMetrics(timerSeconds, wordCount);
+  stopAudioAnalysis();
+
   const prompt = $("#open-prompt-text").textContent;
-  await analyzeAndShowResults(text, "open", prompt);
+  await analyzeAndShowResults(text, "open", prompt, voiceMetrics);
 });
 
 // ===== CONVERSATION MODE =====
@@ -363,6 +495,7 @@ const convoOpeners = {
 let convoMessages = [];
 let convoTurnCount = 0;
 let convoTranscript = "";
+let convoVoiceMetrics = { totalVolume: [], totalPauses: 0, totalWords: 0, totalDuration: 0 };
 
 $("#mode-convo").addEventListener("click", () => startConvoMode());
 
@@ -374,6 +507,7 @@ function startConvoMode() {
   convoMessages = [];
   convoTurnCount = 0;
   convoTranscript = "";
+  convoVoiceMetrics = { totalVolume: [], totalPauses: 0, totalWords: 0, totalDuration: 0 };
 
   const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
   $("#convo-diff-badge").textContent = labels[difficulty];
@@ -386,7 +520,11 @@ function startConvoMode() {
   addChatMsg("ai", opener);
 
   showScreen("convo");
-  $("#convo-input").focus();
+
+  // AI speaks the opener
+  speak(opener).then(() => {
+    $("#convo-input").focus();
+  });
 }
 
 function addChatMsg(role, text, method) {
@@ -418,6 +556,15 @@ function hideTyping() { const e = $("#typing"); if (e) e.remove(); }
 
 async function sendConvoMessage(text, method = "typed") {
   if (!text.trim()) return;
+
+  // Capture voice metrics for this turn if recording
+  if (method === "voice" && volumeSamples.length > 0) {
+    convoVoiceMetrics.totalVolume.push(...volumeSamples);
+    convoVoiceMetrics.totalPauses += silenceSegments;
+    convoVoiceMetrics.totalWords += text.split(/\s+/).length;
+  }
+  stopAudioAnalysis();
+
   addChatMsg("user", text, method);
   convoMessages.push({ role: "user", content: text });
   convoTurnCount++;
@@ -431,18 +578,15 @@ async function sendConvoMessage(text, method = "typed") {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: convoMessages,
-        difficulty,
-        profile,
-        mode: "conversation",
-      }),
+      body: JSON.stringify({ messages: convoMessages, difficulty, profile, mode: "conversation" }),
     });
     const data = await res.json();
     hideTyping();
     if (data.response) {
       convoMessages.push({ role: "assistant", content: data.response });
       addChatMsg("ai", data.response);
+      // AI speaks its response
+      speak(data.response);
     }
   } catch {
     hideTyping();
@@ -466,8 +610,9 @@ $("#convo-mic-btn").addEventListener("touchstart", (e) => { e.preventDefault(); 
 $("#convo-mic-btn").addEventListener("touchend", (e) => { e.preventDefault(); stopConvoRecording(); });
 
 function startConvoRecording() {
+  stopSpeaking(); // Stop AI voice when user starts talking
   convoRecording = true;
-  startRecording(
+  startRecordingWithAudio(
     (final, interim) => { $("#convo-input").value = final + interim; },
     null,
     $("#convo-speech-status"),
@@ -487,8 +632,21 @@ function stopConvoRecording() {
 // End conversation session
 $("#convo-end-btn").addEventListener("click", async () => {
   stopRecording();
+  stopSpeaking();
+  stopAudioAnalysis();
   if (convoTurnCount === 0) return;
-  await analyzeAndShowResults(convoTranscript, "conversation", null);
+
+  const totalDuration = Math.round((Date.now() - sessionStartTime) / 1000);
+  const wordCount = convoTranscript.split(/\s+/).length;
+  const voiceMetrics = convoVoiceMetrics.totalVolume.length > 0 ? {
+    avgVolume: Math.round(convoVoiceMetrics.totalVolume.reduce((a, b) => a + b, 0) / convoVoiceMetrics.totalVolume.length),
+    wpm: totalDuration > 0 ? Math.round((wordCount / totalDuration) * 60) : 0,
+    pauseCount: convoVoiceMetrics.totalPauses,
+    durationSec: totalDuration,
+    wordCount,
+  } : null;
+
+  await analyzeAndShowResults(convoTranscript, "conversation", null, voiceMetrics);
 });
 
 // Continue button
@@ -498,39 +656,54 @@ $("#continue-btn").addEventListener("click", () => {
 });
 
 // ===== ANALYSIS & RESULTS =====
-async function analyzeAndShowResults(text, mode, prompt) {
+async function analyzeAndShowResults(text, mode, prompt, voiceMetrics) {
   showScreen("results");
   $("#overall-num").textContent = "...";
   $("#overall-label").textContent = "Analyzing your speech...";
+
+  // Reset bars
+  $$(".sb-fill").forEach((f) => { f.style.width = "0%"; });
+  $$(".sb-num").forEach((n) => { n.textContent = "-"; });
+  $("#score-ring").style.transition = "none";
+  $("#score-ring").style.strokeDashoffset = 326.73;
 
   try {
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, difficulty, mode, prompt, profile }),
+      body: JSON.stringify({ text, difficulty, mode, prompt, profile, voiceMetrics }),
     });
     const data = await res.json();
+
+    if (data.error) {
+      $("#overall-label").textContent = "Analysis failed: " + data.error;
+      return;
+    }
+
     displayResults(data, text, mode);
+
+    // AI reads the summary feedback
+    const topFix = data.fixes?.[0];
+    if (topFix) {
+      speak(`Your overall score is ${data.overall} out of 10. ${topFix}`);
+    }
 
     // Save session
     const session = {
-      date: today,
-      mode,
-      difficulty,
-      scores: data,
+      date: today, mode, difficulty, scores: data,
       duration: Math.round((Date.now() - sessionStartTime) / 1000),
       overall: data.overall || 0,
     };
     sessions.unshift(session);
     if (sessions.length > 100) sessions.length = 100;
     store("sessions", sessions);
-  } catch {
-    $("#overall-label").textContent = "Analysis failed. Try again.";
+  } catch (err) {
+    console.error("Analysis error:", err);
+    $("#overall-label").textContent = "Analysis failed. Check your connection.";
   }
 }
 
 function displayResults(data, transcript, mode) {
-  // Overall score animation
   const overall = data.overall || 0;
   const circumference = 326.73;
   const offset = circumference - (overall / 10) * circumference;
@@ -544,13 +717,11 @@ function displayResults(data, transcript, mode) {
     $("#overall-num").textContent = count.toFixed(1);
   }, 30);
 
-  // Label
   if (overall >= 8) $("#overall-label").textContent = "Excellent work!";
   else if (overall >= 6) $("#overall-label").textContent = "Solid performance. Room to grow.";
   else if (overall >= 4) $("#overall-label").textContent = "Decent start. Keep pushing.";
   else $("#overall-label").textContent = "Rough session. Let's improve.";
 
-  // Score bars
   const cats = ["clarity", "confidence", "flow", "conciseness", "vocabulary", "engagement", "fillerWords"];
   cats.forEach((cat) => {
     const row = $(`.score-bar-row[data-cat="${cat}"]`);
@@ -567,14 +738,12 @@ function displayResults(data, transcript, mode) {
     num.textContent = score;
   });
 
-  // Strongest / Weakest
   const scoreEntries = cats.map((c) => ({ name: c, score: data[c] || 0 }));
   scoreEntries.sort((a, b) => b.score - a.score);
   const nameMap = { clarity: "Clarity", confidence: "Confidence", flow: "Flow", conciseness: "Conciseness", vocabulary: "Vocabulary", engagement: "Engagement", fillerWords: "Filler Words" };
-  $("#strongest-area").textContent = nameMap[scoreEntries[0].name] || scoreEntries[0].name;
-  $("#weakest-area").textContent = nameMap[scoreEntries[scoreEntries.length - 1].name] || scoreEntries[scoreEntries.length - 1].name;
+  $("#strongest-area").textContent = nameMap[scoreEntries[0].name];
+  $("#weakest-area").textContent = nameMap[scoreEntries[scoreEntries.length - 1].name];
 
-  // Feedback
   const fbList = $("#feedback-list");
   fbList.innerHTML = "";
   (data.fixes || []).forEach((fix) => {
@@ -583,7 +752,6 @@ function displayResults(data, transcript, mode) {
     fbList.appendChild(li);
   });
 
-  // Filler breakdown
   const fillerSection = $("#filler-section");
   const fillerDiv = $("#filler-breakdown");
   if (data.fillerBreakdown && Object.keys(data.fillerBreakdown).length > 0) {
@@ -595,7 +763,6 @@ function displayResults(data, transcript, mode) {
     fillerSection.classList.add("hidden");
   }
 
-  // Wording suggestions
   const wordingSection = $("#wording-section");
   const wordingList = $("#wording-list");
   if (data.wordingSuggestions && data.wordingSuggestions.length > 0) {
@@ -616,16 +783,25 @@ function displayResults(data, transcript, mode) {
   });
   $("#results-transcript").innerHTML = highlighted || "<em>No transcript available.</em>";
 
-  // Next challenge
-  $("#next-challenge-text").textContent = data.nextChallenge || "Complete another session and try to beat this score.";
+  // Voice metrics display
+  if (data.voiceAnalysis) {
+    const va = data.voiceAnalysis;
+    let vaHtml = "";
+    if (va.paceNote) vaHtml += `<li>${va.paceNote}</li>`;
+    if (va.volumeNote) vaHtml += `<li>${va.volumeNote}</li>`;
+    if (va.pauseNote) vaHtml += `<li>${va.pauseNote}</li>`;
+    if (vaHtml) {
+      const existing = fbList.innerHTML;
+      fbList.innerHTML = vaHtml + existing;
+    }
+  }
 
-  // Reset ring for next time
+  $("#next-challenge-text").textContent = data.nextChallenge || "Complete another session and try to beat this score.";
   ring.style.transition = "none";
 }
 
 // Results buttons
 $("#results-retry").addEventListener("click", () => {
-  // Reset the score ring
   $("#score-ring").style.strokeDashoffset = 326.73;
   if (currentMode === "open") startOpenMode();
   else startConvoMode();
@@ -650,7 +826,6 @@ function loadProgress() {
   $("#prog-best").textContent = best;
   $("#prog-streak").textContent = streak;
 
-  // Trend chart
   const canvas = $("#trend-chart");
   const empty = $("#trend-empty");
   if (total < 2) {
@@ -662,24 +837,20 @@ function loadProgress() {
     drawTrendChart(canvas, sessions.slice(0, 20).reverse());
   }
 
-  // History list
   const list = $("#history-list");
   if (total === 0) {
     list.innerHTML = '<p class="empty-msg">No sessions yet.</p>';
   } else {
     const modeLabels = { open: "Open-Ended", conversation: "Conversation" };
     const diffLabels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
-    list.innerHTML = sessions
-      .slice(0, 20)
-      .map((s) => `
-        <div class="history-card">
-          <div class="hc-score">${(s.overall || 0).toFixed(1)}</div>
-          <div class="hc-info">
-            <div class="hc-mode">${modeLabels[s.mode] || s.mode} &middot; ${diffLabels[s.difficulty] || s.difficulty}</div>
-            <div class="hc-meta">${s.date} &middot; ${Math.round((s.duration || 0) / 60)}min &middot; ${s.mode === "conversation" ? (s.scores?.turns || "?") + " turns" : ""}</div>
-          </div>
-        </div>`)
-      .join("");
+    list.innerHTML = sessions.slice(0, 20).map((s) => `
+      <div class="history-card">
+        <div class="hc-score">${(s.overall || 0).toFixed(1)}</div>
+        <div class="hc-info">
+          <div class="hc-mode">${modeLabels[s.mode] || s.mode} &middot; ${diffLabels[s.difficulty] || s.difficulty}</div>
+          <div class="hc-meta">${s.date} &middot; ${Math.round((s.duration || 0) / 60)}min</div>
+        </div>
+      </div>`).join("");
   }
 
   showScreen("progress");
@@ -697,19 +868,14 @@ function drawTrendChart(canvas, data) {
   const pad = { t: 20, r: 20, b: 30, l: 40 };
   const cw = w - pad.l - pad.r;
   const ch = h - pad.t - pad.b;
-
   ctx.clearRect(0, 0, w, h);
 
-  // Grid lines
   ctx.strokeStyle = "#2a2a4a";
   ctx.lineWidth = 0.5;
   for (let i = 0; i <= 10; i += 2) {
     const y = pad.t + ch - (i / 10) * ch;
-    ctx.beginPath();
-    ctx.moveTo(pad.l, y);
-    ctx.lineTo(w - pad.r, y);
-    ctx.stroke();
-    ctx.fillStyle = "#6868880";
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.fillStyle = "#686888";
     ctx.font = "11px system-ui";
     ctx.textAlign = "right";
     ctx.fillText(i, pad.l - 8, y + 4);
@@ -717,13 +883,11 @@ function drawTrendChart(canvas, data) {
 
   if (data.length < 2) return;
 
-  // Line
   const points = data.map((s, i) => ({
     x: pad.l + (i / (data.length - 1)) * cw,
     y: pad.t + ch - ((s.overall || 0) / 10) * ch,
   }));
 
-  // Gradient fill
   const grad = ctx.createLinearGradient(0, pad.t, 0, h - pad.b);
   grad.addColorStop(0, "rgba(108, 99, 255, 0.3)");
   grad.addColorStop(1, "rgba(108, 99, 255, 0)");
@@ -734,7 +898,6 @@ function drawTrendChart(canvas, data) {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // Line
   ctx.beginPath();
   points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
   ctx.strokeStyle = "#6C63FF";
@@ -742,7 +905,6 @@ function drawTrendChart(canvas, data) {
   ctx.lineJoin = "round";
   ctx.stroke();
 
-  // Dots
   points.forEach((p) => {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
