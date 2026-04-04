@@ -212,22 +212,26 @@
 
       <div id="convo-messages" class="chat-messages"></div>
 
-      <div class="chat-input-area">
-        <div id="convo-speech-status" class="speech-status hidden">
-          <div class="pulse-ring"></div><span>Listening...</span>
+      <!-- Live conversation status -->
+      <div class="convo-bottom">
+        <div id="convo-live-status" class="live-status">
+          <div id="convo-state-indicator" class="state-dot listening"></div>
+          <span id="convo-state-label">Starting...</span>
         </div>
-        <div class="input-row">
-          <button id="convo-mic-btn" class="mic-btn">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+
+        <div class="convo-controls">
+          <button id="convo-mic-btn" class="convo-mic-toggle" title="Tap to mute/unmute">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
               <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
             </svg>
           </button>
-          <input type="text" id="convo-input" placeholder="Type or hold mic to speak..." autocomplete="off">
+          <input type="text" id="convo-input" placeholder="Or type here..." autocomplete="off">
           <button id="convo-send-btn" class="send-btn">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
         </div>
+
         <button id="convo-end-btn" class="end-session-btn">End Session &amp; Get Scored</button>
       </div>
     </div>

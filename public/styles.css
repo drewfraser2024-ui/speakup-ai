@@ -154,6 +154,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .end-session-btn{margin-top:10px;width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:50px;color:var(--text2);font-size:.82rem;font-family:inherit;cursor:pointer;transition:all .2s}
 .end-session-btn:hover{border-color:var(--accent);color:var(--accent)}
 
+/* Live conversation mode */
+.convo-bottom{padding:10px 20px 16px;background:var(--bg2);border-top:1px solid var(--border);flex-shrink:0}
+.live-status{display:flex;align-items:center;gap:10px;padding:8px 0;justify-content:center}
+.state-dot{width:10px;height:10px;border-radius:50%;background:var(--text2);flex-shrink:0}
+.state-dot.listening{background:var(--success);animation:pulse-green 1.5s infinite}
+.state-dot.speaking{background:var(--primary);animation:pulse-blue 1s infinite}
+.state-dot.processing{background:var(--warning);animation:pulse-yellow 0.8s infinite}
+#convo-state-label{font-size:.85rem;color:var(--text2)}
+
+@keyframes pulse-green{0%{box-shadow:0 0 0 0 rgba(74,222,128,.5)}70%{box-shadow:0 0 0 10px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes pulse-blue{0%{box-shadow:0 0 0 0 rgba(108,99,255,.5)}70%{box-shadow:0 0 0 10px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes pulse-yellow{0%{box-shadow:0 0 0 0 rgba(251,191,36,.5)}70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+
+.convo-controls{display:flex;gap:8px;align-items:center}
+.convo-mic-toggle{width:52px;height:52px;border-radius:50%;border:2px solid var(--success);background:rgba(74,222,128,.1);color:var(--success);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0}
+.convo-mic-toggle:hover{background:rgba(74,222,128,.2)}
+.convo-mic-toggle.muted{border-color:var(--danger);background:rgba(248,113,113,.1);color:var(--danger)}
+
 /* ===== RESULTS ===== */
 #results-screen{overflow-y:auto}
 .results-body{max-width:560px;width:100%;margin:0 auto;padding:32px 20px 48px}

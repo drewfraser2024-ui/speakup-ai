@@ -388,8 +388,11 @@ function setupBackButtons() {
     btn.addEventListener("click", () => {
       stopTimer();
       stopRecording();
+      stopAutoListening();
       stopAudioAnalysis();
       stopSpeaking();
+      convoState = "idle";
+      clearTimeout(silenceTimer);
       loadHome();
       showScreen("home");
     });
@@ -577,7 +580,7 @@ $("#open-done-btn").addEventListener("click", async () => {
   await analyzeAndShowResults(text, "open", prompt, voiceMetrics, speechErrors);
 });
 
-// ===== CONVERSATION MODE =====
+// ===== CONVERSATION MODE (hands-free, like talking to a human) =====
 const convoOpeners = {
   easy: "Hey! Let's just chat. Tell me about something that made you smile recently.",
   medium: "Welcome to your training session. Let's dig into a real topic. What's something happening in the world that you have an opinion on?",
@@ -589,8 +592,42 @@ let convoMessages = [];
 let convoTurnCount = 0;
 let convoTranscript = "";
 let convoVoiceMetrics = { totalVolume: [], totalPauses: 0, totalWords: 0, totalDuration: 0 };
+let convoState = "idle"; // "idle" | "ai-speaking" | "listening" | "processing"
+let silenceTimer = null;
+let lastSpeechTime = 0;
+const SILENCE_TIMEOUT = 2000; // 2 seconds of silence = done talking
+let convoFinalTranscript = "";
+let convoInterimTranscript = "";
 
 $("#mode-convo").addEventListener("click", () => startConvoMode());
+
+function updateConvoStatus(state) {
+  convoState = state;
+  const statusEl = $("#convo-live-status");
+  const indicator = $("#convo-state-indicator");
+  const label = $("#convo-state-label");
+
+  if (!statusEl) return;
+  statusEl.classList.remove("hidden");
+
+  switch (state) {
+    case "ai-speaking":
+      indicator.className = "state-dot speaking";
+      label.textContent = "AI is speaking...";
+      break;
+    case "listening":
+      indicator.className = "state-dot listening";
+      label.textContent = "Your turn — speak naturally";
+      break;
+    case "processing":
+      indicator.className = "state-dot processing";
+      label.textContent = "Thinking...";
+      break;
+    default:
+      indicator.className = "state-dot";
+      label.textContent = "Tap mic to start";
+  }
+}
 
 function startConvoMode() {
   currentMode = "convo";
@@ -600,6 +637,8 @@ function startConvoMode() {
   convoMessages = [];
   convoTurnCount = 0;
   convoTranscript = "";
+  convoFinalTranscript = "";
+  convoInterimTranscript = "";
   convoVoiceMetrics = { totalVolume: [], totalPauses: 0, totalWords: 0, totalDuration: 0 };
 
   const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Brutal" };
@@ -607,6 +646,7 @@ function startConvoMode() {
   $("#convo-diff-badge").className = `badge ${difficulty}`;
   $("#convo-turns").textContent = "0";
   $("#convo-messages").innerHTML = "";
+  $("#convo-input").value = "";
 
   const opener = convoOpeners[difficulty] || convoOpeners.easy;
   convoMessages.push({ role: "assistant", content: opener });
@@ -614,10 +654,151 @@ function startConvoMode() {
 
   showScreen("convo");
 
-  // AI speaks the opener
+  // AI speaks the opener, then auto-listens
+  updateConvoStatus("ai-speaking");
   speak(opener).then(() => {
-    $("#convo-input").focus();
+    startAutoListening();
   });
+}
+
+// Auto-listen: starts recording and auto-sends when user stops talking
+async function startAutoListening() {
+  updateConvoStatus("listening");
+  convoFinalTranscript = "";
+  convoInterimTranscript = "";
+  $("#convo-input").value = "";
+  lastSpeechTime = Date.now();
+
+  if (!recognition) recognition = createRecognition();
+  if (!recognition) {
+    updateConvoStatus("idle");
+    return;
+  }
+
+  // Start audio analysis for voice metrics
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    initAudioAnalysis(stream);
+  } catch (e) {
+    console.warn("Mic access error:", e);
+  }
+
+  recognition.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        convoFinalTranscript += e.results[i][0].transcript + " ";
+      } else {
+        interim += e.results[i][0].transcript;
+      }
+    }
+    convoInterimTranscript = interim;
+    lastSpeechTime = Date.now();
+
+    // Show live transcript in input
+    $("#convo-input").value = convoFinalTranscript + interim;
+
+    // Reset silence timer every time we get speech
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      // User stopped talking — auto-send
+      const text = (convoFinalTranscript + convoInterimTranscript).trim();
+      if (text.length > 0) {
+        finishUserTurn(text);
+      }
+    }, SILENCE_TIMEOUT);
+  };
+
+  recognition.onend = () => {
+    if (isRecording && convoState === "listening") {
+      // Keep listening if still in listening state
+      try { recognition.start(); } catch {}
+    }
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error === "no-speech") {
+      // No speech detected, restart
+      if (convoState === "listening") {
+        try { recognition.start(); } catch {}
+      }
+    } else {
+      console.error("Recognition error:", e.error);
+    }
+  };
+
+  isRecording = true;
+  try { recognition.start(); } catch {}
+}
+
+function stopAutoListening() {
+  isRecording = false;
+  clearTimeout(silenceTimer);
+  try { recognition?.stop(); } catch {}
+}
+
+async function finishUserTurn(text) {
+  stopAutoListening();
+  stopAudioAnalysis();
+
+  if (!text.trim()) {
+    startAutoListening();
+    return;
+  }
+
+  // Capture voice metrics
+  if (volumeSamples.length > 0) {
+    convoVoiceMetrics.totalVolume.push(...volumeSamples);
+    convoVoiceMetrics.totalPauses += silenceSegments;
+    convoVoiceMetrics.totalWords += text.split(/\s+/).length;
+  }
+
+  // Detect speech errors
+  const turnErrors = analyzeSpeechErrors(text);
+  const errorContext = speechErrorSummary(turnErrors);
+
+  addChatMsg("user", text, "voice");
+  convoMessages.push({ role: "user", content: text });
+  convoTurnCount++;
+  convoTranscript += text + " ";
+  $("#convo-turns").textContent = convoTurnCount;
+  $("#convo-input").value = "";
+
+  // AI thinks
+  updateConvoStatus("processing");
+  showTyping();
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: convoMessages,
+        difficulty, profile, mode: "conversation",
+        speechErrors: turnErrors.totalErrors > 0 ? errorContext : null,
+      }),
+    });
+    const data = await res.json();
+    hideTyping();
+
+    if (data.response) {
+      convoMessages.push({ role: "assistant", content: data.response });
+      addChatMsg("ai", data.response);
+
+      // AI speaks, then auto-listens again
+      updateConvoStatus("ai-speaking");
+      speak(data.response).then(() => {
+        if (convoState !== "idle") {
+          startAutoListening();
+        }
+      });
+    }
+  } catch {
+    hideTyping();
+    addChatMsg("ai", "Connection error. Let me try that again.");
+    updateConvoStatus("listening");
+    startAutoListening();
+  }
 }
 
 function addChatMsg(role, text, method) {
@@ -647,95 +828,51 @@ function showTyping() {
 }
 function hideTyping() { const e = $("#typing"); if (e) e.remove(); }
 
-async function sendConvoMessage(text, method = "typed") {
-  if (!text.trim()) return;
-
-  // Capture voice metrics for this turn if recording
-  if (method === "voice" && volumeSamples.length > 0) {
-    convoVoiceMetrics.totalVolume.push(...volumeSamples);
-    convoVoiceMetrics.totalPauses += silenceSegments;
-    convoVoiceMetrics.totalWords += text.split(/\s+/).length;
+// Manual send still works (typing fallback)
+$("#convo-send-btn").addEventListener("click", () => {
+  const text = $("#convo-input").value.trim();
+  if (text) {
+    stopAutoListening();
+    stopSpeaking();
+    finishUserTurn(text);
   }
-  stopAudioAnalysis();
-
-  // Detect speech errors in this turn
-  const turnErrors = analyzeSpeechErrors(text);
-  const errorContext = speechErrorSummary(turnErrors);
-
-  addChatMsg("user", text, method);
-  // Send the raw text as the user message, but include error context as a system hint
-  convoMessages.push({ role: "user", content: text });
-  convoTurnCount++;
-  convoTranscript += text + " ";
-  $("#convo-turns").textContent = convoTurnCount;
-  $("#convo-input").value = "";
-  $("#convo-input").disabled = true;
-
-  showTyping();
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: convoMessages,
-        difficulty, profile, mode: "conversation",
-        speechErrors: turnErrors.totalErrors > 0 ? errorContext : null,
-      }),
-    });
-    const data = await res.json();
-    hideTyping();
-    if (data.response) {
-      convoMessages.push({ role: "assistant", content: data.response });
-      addChatMsg("ai", data.response);
-      // AI speaks its response
-      speak(data.response);
-    }
-  } catch {
-    hideTyping();
-    addChatMsg("ai", "Connection error. Try again.");
-  }
-  $("#convo-input").disabled = false;
-  $("#convo-input").focus();
-}
-
-$("#convo-send-btn").addEventListener("click", () => sendConvoMessage($("#convo-input").value));
+});
 $("#convo-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendConvoMessage($("#convo-input").value); }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    const text = $("#convo-input").value.trim();
+    if (text) {
+      stopAutoListening();
+      stopSpeaking();
+      finishUserTurn(text);
+    }
+  }
 });
 
-// Mic for conversation
-let convoRecording = false;
-$("#convo-mic-btn").addEventListener("mousedown", (e) => { e.preventDefault(); startConvoRecording(); });
-$("#convo-mic-btn").addEventListener("mouseup", () => stopConvoRecording());
-$("#convo-mic-btn").addEventListener("mouseleave", () => { if (convoRecording) stopConvoRecording(); });
-$("#convo-mic-btn").addEventListener("touchstart", (e) => { e.preventDefault(); startConvoRecording(); });
-$("#convo-mic-btn").addEventListener("touchend", (e) => { e.preventDefault(); stopConvoRecording(); });
-
-function startConvoRecording() {
-  stopSpeaking(); // Stop AI voice when user starts talking
-  convoRecording = true;
-  startRecordingWithAudio(
-    (final, interim) => { $("#convo-input").value = final + interim; },
-    null,
-    $("#convo-speech-status"),
-    $("#convo-mic-btn")
-  );
-}
-function stopConvoRecording() {
-  if (!convoRecording) return;
-  convoRecording = false;
-  stopRecordingUI($("#convo-speech-status"), $("#convo-mic-btn"));
-  setTimeout(() => {
-    const text = $("#convo-input").value.trim();
-    if (text) { sendConvoMessage(text, "voice"); $("#convo-input").value = ""; }
-  }, 300);
-}
+// Manual mic toggle (tap to mute/unmute during conversation)
+$("#convo-mic-btn").addEventListener("click", () => {
+  if (convoState === "listening") {
+    stopAutoListening();
+    updateConvoStatus("idle");
+    $("#convo-mic-btn").classList.add("muted");
+  } else if (convoState === "idle") {
+    $("#convo-mic-btn").classList.remove("muted");
+    stopSpeaking();
+    startAutoListening();
+  } else if (convoState === "ai-speaking") {
+    // Interrupt the AI
+    stopSpeaking();
+    $("#convo-mic-btn").classList.remove("muted");
+    startAutoListening();
+  }
+});
 
 // End conversation session
 $("#convo-end-btn").addEventListener("click", async () => {
-  stopRecording();
+  stopAutoListening();
   stopSpeaking();
   stopAudioAnalysis();
+  convoState = "idle";
   if (convoTurnCount === 0) return;
 
   const totalDuration = Math.round((Date.now() - sessionStartTime) / 1000);
