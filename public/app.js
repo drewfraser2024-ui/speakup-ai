@@ -115,35 +115,44 @@ function speechErrorSummary(errors) {
   return summary;
 }
 
-// ===== VOICE METRICS (Web Audio API) =====
+// ===== VOICE METRICS + TONE ANALYSIS (Web Audio API) =====
 let audioContext = null;
 let audioAnalyser = null;
 let audioStream = null;
 let volumeSamples = [];
+let pitchSamples = [];
+let energyOverTime = []; // energy snapshots every ~0.5s for contour
 let silenceSegments = 0;
 let lastWasSilent = false;
+let toneAnalysisBuffer = null; // Float32 time-domain buffer for pitch
 const SILENCE_THRESHOLD = 15;
 
 function initAudioAnalysis(stream) {
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
   audioAnalyser = audioContext.createAnalyser();
-  audioAnalyser.fftSize = 256;
+  audioAnalyser.fftSize = 2048; // Larger FFT for pitch detection
   const source = audioContext.createMediaStreamSource(stream);
   source.connect(audioAnalyser);
   audioStream = stream;
   volumeSamples = [];
+  pitchSamples = [];
+  energyOverTime = [];
   silenceSegments = 0;
   lastWasSilent = false;
+  toneAnalysisBuffer = new Float32Array(audioAnalyser.fftSize);
   collectAudioData();
 }
 
 function collectAudioData() {
   if (!audioAnalyser || !isRecording) return;
-  const data = new Uint8Array(audioAnalyser.frequencyBinCount);
-  audioAnalyser.getByteFrequencyData(data);
-  const avg = data.reduce((a, b) => a + b, 0) / data.length;
+
+  // Volume analysis (frequency domain)
+  const freqData = new Uint8Array(audioAnalyser.frequencyBinCount);
+  audioAnalyser.getByteFrequencyData(freqData);
+  const avg = freqData.reduce((a, b) => a + b, 0) / freqData.length;
   volumeSamples.push(avg);
 
+  // Silence detection
   if (avg < SILENCE_THRESHOLD) {
     if (!lastWasSilent) silenceSegments++;
     lastWasSilent = true;
@@ -151,7 +160,122 @@ function collectAudioData() {
     lastWasSilent = false;
   }
 
+  // Pitch detection using autocorrelation (only when there's voice)
+  if (avg >= SILENCE_THRESHOLD) {
+    audioAnalyser.getFloatTimeDomainData(toneAnalysisBuffer);
+    const pitch = detectPitch(toneAnalysisBuffer, audioContext.sampleRate);
+    if (pitch > 50 && pitch < 500) { // Human voice range
+      pitchSamples.push(pitch);
+    }
+  }
+
+  // Energy contour snapshot (every ~30 frames ≈ 0.5s at 60fps)
+  if (volumeSamples.length % 30 === 0) {
+    energyOverTime.push(avg);
+  }
+
   if (isRecording) requestAnimationFrame(collectAudioData);
+}
+
+// Autocorrelation pitch detection
+function detectPitch(buffer, sampleRate) {
+  const SIZE = buffer.length;
+  // Check if there's enough signal
+  let rms = 0;
+  for (let i = 0; i < SIZE; i++) rms += buffer[i] * buffer[i];
+  rms = Math.sqrt(rms / SIZE);
+  if (rms < 0.01) return -1; // Too quiet
+
+  // Autocorrelation
+  const correlations = new Array(SIZE).fill(0);
+  for (let lag = 0; lag < SIZE; lag++) {
+    let sum = 0;
+    for (let i = 0; i < SIZE - lag; i++) {
+      sum += buffer[i] * buffer[i + lag];
+    }
+    correlations[lag] = sum;
+  }
+
+  // Find first dip then first peak after it
+  let d = 0;
+  while (d < SIZE && correlations[d] > 0) d++;
+  if (d >= SIZE) return -1;
+
+  let maxVal = -1;
+  let maxPos = -1;
+  for (let i = d; i < SIZE; i++) {
+    if (correlations[i] > maxVal) {
+      maxVal = correlations[i];
+      maxPos = i;
+    }
+  }
+  if (maxPos === -1) return -1;
+
+  return sampleRate / maxPos;
+}
+
+// Analyze tone characteristics from collected pitch/volume data
+function analyzeTone() {
+  if (pitchSamples.length < 5) return null;
+
+  const avgPitch = pitchSamples.reduce((a, b) => a + b, 0) / pitchSamples.length;
+  const minPitch = Math.min(...pitchSamples);
+  const maxPitch = Math.max(...pitchSamples);
+  const pitchRange = maxPitch - minPitch;
+
+  // Pitch standard deviation (measures monotone vs expressive)
+  const pitchMean = avgPitch;
+  const pitchVariance = pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / pitchSamples.length;
+  const pitchStdDev = Math.sqrt(pitchVariance);
+
+  // Pitch trend: rising, falling, or steady (compare first vs last third)
+  const third = Math.floor(pitchSamples.length / 3);
+  const firstThirdAvg = pitchSamples.slice(0, third).reduce((a, b) => a + b, 0) / third;
+  const lastThirdAvg = pitchSamples.slice(-third).reduce((a, b) => a + b, 0) / third;
+  const pitchTrendHz = lastThirdAvg - firstThirdAvg;
+  let pitchTrend = "steady";
+  if (pitchTrendHz > 15) pitchTrend = "rising";
+  else if (pitchTrendHz < -15) pitchTrend = "falling";
+
+  // Energy contour: does voice trail off or stay strong?
+  let energyTrend = "steady";
+  if (energyOverTime.length >= 4) {
+    const eThird = Math.floor(energyOverTime.length / 3);
+    const eFirst = energyOverTime.slice(0, eThird).reduce((a, b) => a + b, 0) / eThird;
+    const eLast = energyOverTime.slice(-eThird).reduce((a, b) => a + b, 0) / eThird;
+    if (eLast < eFirst * 0.6) energyTrend = "trailing off";
+    else if (eLast > eFirst * 1.3) energyTrend = "building up";
+    else energyTrend = "consistent";
+  }
+
+  // Classify expressiveness
+  let expressiveness = "monotone";
+  if (pitchStdDev > 40) expressiveness = "very expressive";
+  else if (pitchStdDev > 25) expressiveness = "expressive";
+  else if (pitchStdDev > 15) expressiveness = "moderate variation";
+  else expressiveness = "monotone/flat";
+
+  // Estimate emotional tone from pitch characteristics
+  let estimatedTone = [];
+  if (avgPitch > 200 && pitchStdDev > 30) estimatedTone.push("excited/enthusiastic");
+  if (avgPitch > 180 && pitchTrend === "rising") estimatedTone.push("nervous/uncertain");
+  if (avgPitch < 150 && pitchStdDev < 20) estimatedTone.push("calm/confident");
+  if (avgPitch < 140 && energyTrend === "consistent") estimatedTone.push("authoritative");
+  if (pitchStdDev < 12) estimatedTone.push("flat/disengaged");
+  if (energyTrend === "trailing off") estimatedTone.push("losing confidence");
+  if (energyTrend === "building up") estimatedTone.push("gaining momentum");
+  if (estimatedTone.length === 0) estimatedTone.push("neutral");
+
+  return {
+    avgPitchHz: Math.round(avgPitch),
+    pitchRangeHz: Math.round(pitchRange),
+    pitchStdDev: Math.round(pitchStdDev),
+    pitchTrend,
+    expressiveness,
+    energyTrend,
+    estimatedTone: estimatedTone.join(", "),
+    sampleCount: pitchSamples.length,
+  };
 }
 
 function getVoiceMetrics(durationSec, wordCount) {
@@ -168,6 +292,9 @@ function getVoiceMetrics(durationSec, wordCount) {
   const silentFrames = volumeSamples.filter((v) => v < SILENCE_THRESHOLD).length;
   const silenceRatio = silentFrames / volumeSamples.length;
 
+  // Tone analysis
+  const tone = analyzeTone();
+
   return {
     avgVolume: Math.round(avgVolume),
     volumeVariation: Math.round(volumeVariation),
@@ -176,6 +303,7 @@ function getVoiceMetrics(durationSec, wordCount) {
     pauseCount: silenceSegments,
     durationSec,
     wordCount,
+    tone, // NEW: pitch and tone data
   };
 }
 
@@ -189,6 +317,7 @@ function stopAudioAnalysis() {
     audioContext = null;
   }
   audioAnalyser = null;
+  toneAnalysisBuffer = null;
 }
 
 // ===== TEXT-TO-SPEECH (AI Voice) =====
@@ -738,6 +867,9 @@ function stopAutoListening() {
 }
 
 async function finishUserTurn(text) {
+  // Capture tone BEFORE stopping audio analysis
+  const turnTone = analyzeTone();
+
   stopAutoListening();
   stopAudioAnalysis();
 
@@ -776,6 +908,7 @@ async function finishUserTurn(text) {
         messages: convoMessages,
         difficulty, profile, mode: "conversation",
         speechErrors: turnErrors.totalErrors > 0 ? errorContext : null,
+        voiceTone: turnTone, // Send real-time tone analysis
       }),
     });
     const data = await res.json();
@@ -1081,6 +1214,26 @@ function displayResults(data, transcript, mode) {
       const existing = fbList.innerHTML;
       fbList.innerHTML = vaHtml + existing;
     }
+  }
+
+  // Tone analysis display
+  const toneSection = $("#tone-section");
+  if (data.toneAnalysis && data.toneAnalysis.toneFeedback) {
+    const ta = data.toneAnalysis;
+    toneSection.classList.remove("hidden");
+    $("#tone-emotion").textContent = ta.emotionalRead || "--";
+    $("#tone-express").textContent = ta.toneFeedback ? "See below" : "--";
+    $("#tone-score").textContent = ta.toneScore ? `${ta.toneScore}/10` : "--";
+    $("#tone-feedback").textContent = ta.toneFeedback || "";
+    $("#tone-tip").textContent = ta.toneTip ? `💡 ${ta.toneTip}` : "";
+
+    // Color the score
+    const scoreEl = $("#tone-score");
+    if (ta.toneScore >= 8) scoreEl.style.color = "var(--success)";
+    else if (ta.toneScore >= 5) scoreEl.style.color = "var(--primary)";
+    else scoreEl.style.color = "var(--danger)";
+  } else {
+    toneSection.classList.add("hidden");
   }
 
   $("#next-challenge-text").textContent = data.nextChallenge || "Complete another session and try to beat this score.";

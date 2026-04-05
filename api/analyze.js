@@ -30,8 +30,25 @@ export default async function handler(req, res) {
 - Pauses: ${voiceMetrics.pauseCount}
 - Duration: ${voiceMetrics.durationSec}s, Words: ${voiceMetrics.wordCount}
 ${voiceMetrics.volumeVariation ? `- Volume variation: ${voiceMetrics.volumeVariation}` : ""}
-${voiceMetrics.silenceRatio ? `- Silence ratio: ${voiceMetrics.silenceRatio}%` : ""}
-Use these to inform confidence, flow, engagement scores.`;
+${voiceMetrics.silenceRatio ? `- Silence ratio: ${voiceMetrics.silenceRatio}%` : ""}`;
+
+    if (voiceMetrics.tone) {
+      const t = voiceMetrics.tone;
+      voiceContext += `\n\nTONE & PITCH ANALYSIS (from real-time audio):
+- Average pitch: ${t.avgPitchHz} Hz (male ~85-180 Hz, female ~165-255 Hz)
+- Pitch range: ${t.pitchRangeHz} Hz (higher = more expressive)
+- Pitch variation (std dev): ${t.pitchStdDev} Hz
+- Pitch trend over time: ${t.pitchTrend} (rising=nervous/questioning, falling=confident/declarative, steady=neutral)
+- Expressiveness: ${t.expressiveness}
+- Energy trend: ${t.energyTrend} (trailing off=losing confidence, building up=gaining momentum)
+- Estimated emotional tone: ${t.estimatedTone}
+USE THIS TONE DATA to assess confidence, engagement, and delivery. Reference the speaker's TONE specifically in your feedback. Examples:
+- "Your pitch was flat — try varying your tone to sound more engaging"
+- "Voice trailed off at the end — finish strong with steady volume"
+- "Rising pitch made you sound uncertain — lower your voice at the end of statements"
+- "Great energy! Your expressive tone kept it interesting"`;
+    }
+    voiceContext += `\nUse these to inform confidence, flow, engagement scores.`;
   }
 
   let errorContext = "";
@@ -49,7 +66,7 @@ ${profile?.goal ? `GOAL: ${profile.goal}` : ""}
 ${voiceContext}${errorContext}
 
 Return EXACTLY this JSON structure (no markdown, no explanation, ONLY JSON):
-{"clarity":<1-10>,"confidence":<1-10>,"flow":<1-10>,"conciseness":<1-10>,"vocabulary":<1-10>,"engagement":<1-10>,"fillerWords":<1-10 where 10=no fillers>,"overall":<1-10>,"fixes":["<specific fix referencing exact words>","<fix 2>","<fix 3>"],"fillerBreakdown":{"<word>":<count>},"wordingSuggestions":[{"original":"<weak phrase>","better":"<stronger version>"}],"nextChallenge":"<specific measurable challenge>","voiceAnalysis":{"paceNote":"<or null>","volumeNote":"<or null>","pauseNote":"<or null>"}}
+{"clarity":<1-10>,"confidence":<1-10>,"flow":<1-10>,"conciseness":<1-10>,"vocabulary":<1-10>,"engagement":<1-10>,"fillerWords":<1-10 where 10=no fillers>,"overall":<1-10>,"fixes":["<specific fix referencing exact words>","<fix 2>","<fix 3>"],"fillerBreakdown":{"<word>":<count>},"wordingSuggestions":[{"original":"<weak phrase>","better":"<stronger version>"}],"nextChallenge":"<specific measurable challenge>","voiceAnalysis":{"paceNote":"<or null>","volumeNote":"<or null>","pauseNote":"<or null>"},"toneAnalysis":{"toneFeedback":"<specific feedback about their vocal tone, pitch, and expressiveness>","emotionalRead":"<what emotion/attitude their voice conveyed>","toneScore":<1-10 where 10=perfect expressive delivery>,"toneTip":"<one actionable tip to improve vocal tone>"}}
 
 RULES:
 - Be SPECIFIC. Reference exact words from transcript.

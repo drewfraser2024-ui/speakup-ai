@@ -34,13 +34,24 @@ const DIFF_PROMPTS = {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { messages, difficulty, profile, mode, speechErrors } = req.body;
+  const { messages, difficulty, profile, mode, speechErrors, voiceTone } = req.body;
   const tone = TONE_MAP[profile?.tone] || TONE_MAP.direct;
   const diffPrompt = DIFF_PROMPTS[difficulty] || DIFF_PROMPTS.easy;
 
   let errorContext = "";
   if (speechErrors) {
     errorContext = `\n\nSPEECH ERROR ALERT FOR THIS TURN:\n${speechErrors}\nYou MUST acknowledge these errors naturally. React to stutters, repeated words, and filler sounds as a real speech coach would.`;
+  }
+
+  let toneContext = "";
+  if (voiceTone) {
+    toneContext = `\n\nVOCAL TONE THIS TURN (from real-time pitch analysis):
+- Pitch: ${voiceTone.avgPitchHz} Hz, Range: ${voiceTone.pitchRangeHz} Hz
+- Expressiveness: ${voiceTone.expressiveness}
+- Pitch trend: ${voiceTone.pitchTrend}
+- Energy: ${voiceTone.energyTrend}
+- Detected tone: ${voiceTone.estimatedTone}
+React to their TONE naturally. If monotone, encourage more expression. If nervous-sounding, reassure. If confident, acknowledge it. Weave tone observations into your response every 2-3 turns.`;
   }
 
   const systemPrompt = `You are an AI speech training partner in CONVERSATION MODE. Real-time back-and-forth dialogue to help users improve speaking.
@@ -61,7 +72,7 @@ RULES:
 3. React to stuttering, filler sounds, self-corrections, rambling, and short lazy answers.
 4. Occasionally (every 3-4 turns) give a brief inline observation about their speaking.
 5. NEVER break character.
-${errorContext}`;
+${errorContext}${toneContext}`;
 
   try {
     const completion = await client.chat.completions.create({

@@ -212,6 +212,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .filler-chip strong{color:var(--accent);margin-left:4px}
 
 /* Stutter Section */
+/* Tone Analysis Section */
+.tone-section{margin-bottom:24px;background:linear-gradient(135deg,rgba(108,99,255,.08),rgba(255,101,132,.06));border:1px solid rgba(108,99,255,.2);border-radius:var(--radius);padding:20px}
+.tone-section h3{font-size:.95rem;margin-bottom:16px}
+.tone-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px}
+.tone-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;text-align:center;display:flex;flex-direction:column;gap:6px}
+.tone-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
+.tone-value{font-size:.95rem;font-weight:600;color:var(--text)}
+.tone-feedback{font-size:.88rem;color:var(--text);line-height:1.5;margin-bottom:8px}
+.tone-tip{font-size:.85rem;color:var(--primary);font-style:italic;padding:10px 14px;background:rgba(108,99,255,.08);border-radius:var(--radius-sm);border-left:3px solid var(--primary)}
+
 .stutter-section{margin-bottom:24px}
 .stutter-section h3{font-size:.95rem;margin-bottom:12px}
 .stutter-breakdown{display:flex;flex-wrap:wrap;gap:8px}
