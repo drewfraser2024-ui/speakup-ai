@@ -145,6 +145,20 @@
             </div>
             <span class="mode-arrow">&rarr;</span>
           </button>
+          <button class="mode-card" id="mode-vocab">
+            <div class="mode-icon-wrap vocab">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                <line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/>
+              </svg>
+            </div>
+            <div class="mode-info">
+              <h3>Vocab Match</h3>
+              <p>Match words to definitions. Build your vocabulary fast.</p>
+            </div>
+            <span class="mode-arrow">&rarr;</span>
+          </button>
         </div>
 
         <!-- Difficulty -->
@@ -156,6 +170,86 @@
         </div>
 
         <button id="progress-btn" class="ghost-btn full-w">View Progress &amp; History</button>
+      </div>
+    </div>
+
+    <!-- ===== VOCAB MATCHING GAME ===== -->
+    <div id="vocab-screen" class="screen">
+      <header class="top-bar">
+        <button class="icon-btn back-to-home">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="tb-info">
+          <h2>Vocab Match</h2>
+          <span id="vocab-diff-badge" class="badge easy">Easy</span>
+        </div>
+        <div class="tb-stats">
+          <span class="mini-stat" id="vocab-timer-display">0:00</span>
+        </div>
+      </header>
+
+      <div class="vocab-body">
+        <!-- Round info -->
+        <div class="vocab-round-bar">
+          <span id="vocab-round-label">Round 1</span>
+          <div class="vocab-xp-badge">
+            <span id="vocab-xp">0</span> XP
+          </div>
+        </div>
+
+        <!-- Instructions -->
+        <p id="vocab-instruction" class="vocab-instruction">Tap a word, then tap its definition to match them.</p>
+
+        <!-- Game area -->
+        <div class="vocab-game-area">
+          <div class="vocab-column" id="vocab-words-col"></div>
+          <div class="vocab-lines">
+            <svg id="vocab-lines-svg" width="100%" height="100%"></svg>
+          </div>
+          <div class="vocab-column" id="vocab-defs-col"></div>
+        </div>
+
+        <!-- Submit / Next -->
+        <div class="vocab-actions">
+          <button id="vocab-submit-btn" class="primary-btn" disabled>Check Answers</button>
+          <button id="vocab-next-btn" class="primary-btn hidden">Next Round &rarr;</button>
+          <button id="vocab-practice-missed-btn" class="ghost-btn hidden">Practice Missed Words</button>
+        </div>
+      </div>
+
+      <!-- Results overlay -->
+      <div id="vocab-results-overlay" class="vocab-results-overlay hidden">
+        <div class="vocab-results-card">
+          <h2>Game Over!</h2>
+          <div class="vocab-final-score">
+            <div class="vr-ring-wrap">
+              <svg viewBox="0 0 100 100" width="100" height="100">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="#1a1a2e" stroke-width="8"/>
+                <circle id="vocab-score-ring" cx="50" cy="50" r="42" fill="none" stroke="url(#vocabGrad)" stroke-width="8"
+                  stroke-dasharray="263.89" stroke-dashoffset="263.89" stroke-linecap="round" transform="rotate(-90 50 50)"/>
+                <defs><linearGradient id="vocabGrad" x1="0%" y1="0%" x2="100%"><stop offset="0%" style="stop-color:#6C63FF"/><stop offset="100%" style="stop-color:#4ADE80"/></linearGradient></defs>
+              </svg>
+              <span id="vocab-final-pct" class="vr-pct">0%</span>
+            </div>
+          </div>
+          <div class="vocab-stats-row">
+            <div class="vs-stat"><span id="vr-correct" class="vs-num">0</span><span class="vs-label">Correct</span></div>
+            <div class="vs-stat"><span id="vr-wrong" class="vs-num">0</span><span class="vs-label">Wrong</span></div>
+            <div class="vs-stat"><span id="vr-time" class="vs-num">0:00</span><span class="vs-label">Time</span></div>
+            <div class="vs-stat"><span id="vr-xp" class="vs-num">0</span><span class="vs-label">XP</span></div>
+          </div>
+
+          <!-- Missed words review -->
+          <div id="vr-missed-section" class="vr-missed-section hidden">
+            <h3>Words to Review</h3>
+            <div id="vr-missed-list" class="vr-missed-list"></div>
+          </div>
+
+          <div class="vocab-results-actions">
+            <button id="vocab-play-again" class="primary-btn">Play Again</button>
+            <button id="vocab-go-home" class="ghost-btn">Home</button>
+          </div>
+        </div>
       </div>
     </div>
 

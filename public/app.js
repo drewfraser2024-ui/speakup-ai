@@ -374,6 +374,7 @@ const screens = {
   convo: $("#convo-screen"),
   results: $("#results-screen"),
   progress: $("#progress-screen"),
+  vocab: $("#vocab-screen"),
 };
 
 function showScreen(name) {
@@ -1355,6 +1356,465 @@ function drawTrendChart(canvas, data) {
     ctx.stroke();
   });
 }
+
+// ===== VOCABULARY MATCHING GAME =====
+let vocabState = {
+  words: [],             // Current round words
+  shuffledDefs: [],      // Shuffled definitions
+  matches: {},           // { wordIdx: defIdx }
+  selectedWord: null,    // Currently selected word index
+  selectedDef: null,     // Currently selected def index
+  round: 1,
+  totalCorrect: 0,
+  totalWrong: 0,
+  totalXP: 0,
+  startTime: null,
+  timerInterval: null,
+  elapsedSec: 0,
+  usedWords: [],         // Track used words across rounds
+  missedWords: [],       // Words user got wrong (for practice mode)
+  allRoundResults: [],   // Results from each round
+  isPracticeMissed: false,
+};
+
+let vocabHistory = load("vocabHistory", { accuracy: [], times: [], missed: {} });
+
+$("#mode-vocab").addEventListener("click", () => startVocabGame());
+
+function startVocabGame() {
+  vocabState = {
+    words: [], shuffledDefs: [], matches: {}, selectedWord: null, selectedDef: null,
+    round: 1, totalCorrect: 0, totalWrong: 0, totalXP: 0,
+    startTime: Date.now(), timerInterval: null, elapsedSec: 0,
+    usedWords: [], missedWords: [], allRoundResults: [], isPracticeMissed: false,
+  };
+  showScreen("vocab");
+  const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Hard" };
+  $("#vocab-diff-badge").textContent = labels[difficulty] || "Easy";
+  $("#vocab-diff-badge").className = `badge ${difficulty}`;
+  $("#vocab-results-overlay").classList.add("hidden");
+  startVocabTimer();
+  loadVocabRound();
+}
+
+function startVocabTimer() {
+  vocabState.elapsedSec = 0;
+  updateVocabTimerDisplay();
+  vocabState.timerInterval = setInterval(() => {
+    vocabState.elapsedSec++;
+    updateVocabTimerDisplay();
+  }, 1000);
+}
+
+function stopVocabTimer() {
+  clearInterval(vocabState.timerInterval);
+}
+
+function updateVocabTimerDisplay() {
+  const m = Math.floor(vocabState.elapsedSec / 60);
+  const s = vocabState.elapsedSec % 60;
+  $("#vocab-timer-display").textContent = `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+async function loadVocabRound() {
+  $("#vocab-round-label").textContent = `Round ${vocabState.round}`;
+  $("#vocab-xp").textContent = vocabState.totalXP;
+  $("#vocab-instruction").textContent = "Loading words...";
+  $("#vocab-words-col").innerHTML = '<div class="vocab-loading"><span></span><span></span><span></span></div>';
+  $("#vocab-defs-col").innerHTML = "";
+  $("#vocab-submit-btn").disabled = true;
+  $("#vocab-submit-btn").classList.remove("hidden");
+  $("#vocab-next-btn").classList.add("hidden");
+  $("#vocab-practice-missed-btn").classList.add("hidden");
+  clearVocabLines();
+
+  const vocabDiff = difficulty === "veryhard" ? "hard" : difficulty;
+
+  try {
+    const res = await fetch("/api/vocab", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ difficulty: vocabDiff, exclude: vocabState.usedWords }),
+    });
+    const data = await res.json();
+
+    if (!data.words || data.words.length !== 4) throw new Error("Bad data");
+
+    vocabState.words = data.words;
+    vocabState.usedWords.push(...data.words.map((w) => w.word));
+
+    // Shuffle definitions
+    vocabState.shuffledDefs = [...data.words]
+      .map((w, i) => ({ ...w, originalIdx: i }))
+      .sort(() => Math.random() - 0.5);
+
+    vocabState.matches = {};
+    vocabState.selectedWord = null;
+    vocabState.selectedDef = null;
+
+    renderVocabBoard();
+    $("#vocab-instruction").textContent = "Tap a word, then tap its definition to match them.";
+  } catch (err) {
+    console.error("Vocab load error:", err);
+    $("#vocab-instruction").textContent = "Failed to load words. Tap to retry.";
+    $("#vocab-words-col").innerHTML = '<button class="ghost-btn" onclick="loadVocabRound()">Retry</button>';
+  }
+}
+
+function renderVocabBoard() {
+  const wordsCol = $("#vocab-words-col");
+  const defsCol = $("#vocab-defs-col");
+  wordsCol.innerHTML = "";
+  defsCol.innerHTML = "";
+
+  vocabState.words.forEach((w, i) => {
+    const el = document.createElement("button");
+    el.className = "vocab-item vocab-word";
+    el.dataset.idx = i;
+    el.innerHTML = `<span class="vi-text">${w.word}</span><span class="vi-num">${i + 1}</span>`;
+    el.addEventListener("click", () => selectVocabWord(i));
+    wordsCol.appendChild(el);
+  });
+
+  vocabState.shuffledDefs.forEach((d, i) => {
+    const el = document.createElement("button");
+    el.className = "vocab-item vocab-def";
+    el.dataset.idx = i;
+    el.innerHTML = `<span class="vi-text">${d.definition}</span><span class="vi-letter">${String.fromCharCode(65 + i)}</span>`;
+    el.addEventListener("click", () => selectVocabDef(i));
+    defsCol.appendChild(el);
+  });
+}
+
+function selectVocabWord(idx) {
+  // If this word is already matched, unmatch it
+  if (vocabState.matches[idx] !== undefined) {
+    const oldDef = vocabState.matches[idx];
+    delete vocabState.matches[idx];
+    updateVocabSelectionUI();
+    drawVocabLines();
+    updateSubmitState();
+    return;
+  }
+
+  vocabState.selectedWord = idx;
+  if (vocabState.selectedDef !== null) {
+    makeVocabMatch(idx, vocabState.selectedDef);
+  } else {
+    updateVocabSelectionUI();
+  }
+}
+
+function selectVocabDef(idx) {
+  // If this def is already matched, unmatch it
+  const matchedWord = Object.keys(vocabState.matches).find((k) => vocabState.matches[k] === idx);
+  if (matchedWord !== undefined) {
+    delete vocabState.matches[matchedWord];
+    updateVocabSelectionUI();
+    drawVocabLines();
+    updateSubmitState();
+    return;
+  }
+
+  vocabState.selectedDef = idx;
+  if (vocabState.selectedWord !== null) {
+    makeVocabMatch(vocabState.selectedWord, idx);
+  } else {
+    updateVocabSelectionUI();
+  }
+}
+
+function makeVocabMatch(wordIdx, defIdx) {
+  // Remove existing match for this word or def
+  Object.keys(vocabState.matches).forEach((k) => {
+    if (parseInt(k) === wordIdx || vocabState.matches[k] === defIdx) {
+      delete vocabState.matches[k];
+    }
+  });
+
+  vocabState.matches[wordIdx] = defIdx;
+  vocabState.selectedWord = null;
+  vocabState.selectedDef = null;
+  updateVocabSelectionUI();
+  drawVocabLines();
+  updateSubmitState();
+}
+
+function updateVocabSelectionUI() {
+  // Words
+  $$(".vocab-word").forEach((el) => {
+    const idx = parseInt(el.dataset.idx);
+    el.classList.remove("selected", "matched");
+    if (idx === vocabState.selectedWord) el.classList.add("selected");
+    if (vocabState.matches[idx] !== undefined) el.classList.add("matched");
+  });
+
+  // Defs
+  $$(".vocab-def").forEach((el) => {
+    const idx = parseInt(el.dataset.idx);
+    el.classList.remove("selected", "matched");
+    if (idx === vocabState.selectedDef) el.classList.add("selected");
+    if (Object.values(vocabState.matches).includes(idx)) el.classList.add("matched");
+  });
+}
+
+function drawVocabLines() {
+  clearVocabLines();
+  const svg = $("#vocab-lines-svg");
+  if (!svg) return;
+
+  const gameArea = $(".vocab-game-area");
+  const gaRect = gameArea.getBoundingClientRect();
+
+  Object.entries(vocabState.matches).forEach(([wIdx, dIdx]) => {
+    const wordEl = $(`.vocab-word[data-idx="${wIdx}"]`);
+    const defEl = $(`.vocab-def[data-idx="${dIdx}"]`);
+    if (!wordEl || !defEl) return;
+
+    const wRect = wordEl.getBoundingClientRect();
+    const dRect = defEl.getBoundingClientRect();
+
+    const x1 = wRect.right - gaRect.left;
+    const y1 = wRect.top + wRect.height / 2 - gaRect.top;
+    const x2 = dRect.left - gaRect.left;
+    const y2 = dRect.top + dRect.height / 2 - gaRect.top;
+
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", x1);
+    line.setAttribute("y1", y1);
+    line.setAttribute("x2", x2);
+    line.setAttribute("y2", y2);
+    line.setAttribute("class", "vocab-match-line");
+    line.dataset.word = wIdx;
+    svg.appendChild(line);
+  });
+}
+
+function clearVocabLines() {
+  const svg = $("#vocab-lines-svg");
+  if (svg) svg.innerHTML = "";
+}
+
+function updateSubmitState() {
+  const allMatched = Object.keys(vocabState.matches).length === 4;
+  $("#vocab-submit-btn").disabled = !allMatched;
+}
+
+// Submit answers
+$("#vocab-submit-btn").addEventListener("click", () => checkVocabAnswers());
+
+function checkVocabAnswers() {
+  let correct = 0;
+  let wrong = 0;
+  const roundMissed = [];
+
+  Object.entries(vocabState.matches).forEach(([wIdx, dIdx]) => {
+    const wordData = vocabState.words[parseInt(wIdx)];
+    const defData = vocabState.shuffledDefs[parseInt(dIdx)];
+    const isCorrect = wordData.word === defData.word;
+
+    // Mark word element
+    const wordEl = $(`.vocab-word[data-idx="${wIdx}"]`);
+    const defEl = $(`.vocab-def[data-idx="${dIdx}"]`);
+
+    if (isCorrect) {
+      correct++;
+      wordEl.classList.add("correct");
+      defEl.classList.add("correct");
+      // Color the line green
+      const line = $(`#vocab-lines-svg line[data-word="${wIdx}"]`);
+      if (line) line.classList.add("correct");
+    } else {
+      wrong++;
+      wordEl.classList.add("wrong");
+      defEl.classList.add("wrong");
+      const line = $(`#vocab-lines-svg line[data-word="${wIdx}"]`);
+      if (line) line.classList.add("wrong");
+      roundMissed.push(wordData);
+
+      // Show correct answer
+      const correctDefIdx = vocabState.shuffledDefs.findIndex((d) => d.word === wordData.word);
+      const correctDefEl = $(`.vocab-def[data-idx="${correctDefIdx}"]`);
+      if (correctDefEl) correctDefEl.classList.add("should-be");
+    }
+  });
+
+  // Disable all buttons
+  $$(".vocab-item").forEach((el) => { el.style.pointerEvents = "none"; });
+
+  // Calculate XP for this round
+  const roundXP = correct * 25 + (correct === 4 ? 50 : 0); // bonus for perfect round
+  vocabState.totalCorrect += correct;
+  vocabState.totalWrong += wrong;
+  vocabState.totalXP += roundXP;
+  vocabState.missedWords.push(...roundMissed);
+  vocabState.allRoundResults.push({ correct, wrong, roundXP });
+  $("#vocab-xp").textContent = vocabState.totalXP;
+
+  // Show round feedback
+  if (correct === 4) {
+    $("#vocab-instruction").innerHTML = `<span style="color:var(--success)">Perfect! +${roundXP} XP</span>`;
+  } else {
+    $("#vocab-instruction").innerHTML = `<span>${correct}/4 correct. +${roundXP} XP</span>`;
+  }
+
+  // Show explanations below each word
+  $$(".vocab-word").forEach((el) => {
+    const idx = parseInt(el.dataset.idx);
+    const wordData = vocabState.words[idx];
+    const expEl = document.createElement("div");
+    expEl.className = "vocab-explanation";
+    expEl.textContent = wordData.explanation;
+    el.appendChild(expEl);
+  });
+
+  // Show next/finish buttons
+  $("#vocab-submit-btn").classList.add("hidden");
+  if (vocabState.round < 3) {
+    $("#vocab-next-btn").classList.remove("hidden");
+  } else {
+    // Game over after 3 rounds
+    setTimeout(() => showVocabResults(), 1500);
+  }
+
+  if (roundMissed.length > 0 && vocabState.round >= 3) {
+    $("#vocab-practice-missed-btn").classList.remove("hidden");
+  }
+}
+
+// Next round
+$("#vocab-next-btn").addEventListener("click", () => {
+  vocabState.round++;
+  loadVocabRound();
+});
+
+// Show final results
+function showVocabResults() {
+  stopVocabTimer();
+
+  const totalQ = vocabState.round * 4;
+  const pct = Math.round((vocabState.totalCorrect / totalQ) * 100);
+  const timeStr = formatVocabTime(vocabState.elapsedSec);
+
+  // Animate
+  const overlay = $("#vocab-results-overlay");
+  overlay.classList.remove("hidden");
+
+  // Score ring
+  const circumference = 263.89;
+  const offset = circumference - (pct / 100) * circumference;
+  const ring = $("#vocab-score-ring");
+  ring.style.strokeDashoffset = circumference;
+  setTimeout(() => {
+    ring.style.transition = "stroke-dashoffset 1s ease";
+    ring.style.strokeDashoffset = offset;
+  }, 100);
+
+  // Animate percentage counter
+  let count = 0;
+  const pctEl = $("#vocab-final-pct");
+  const counter = setInterval(() => {
+    count += 2;
+    if (count >= pct) { count = pct; clearInterval(counter); }
+    pctEl.textContent = count + "%";
+  }, 20);
+
+  $("#vr-correct").textContent = vocabState.totalCorrect;
+  $("#vr-wrong").textContent = vocabState.totalWrong;
+  $("#vr-time").textContent = timeStr;
+  $("#vr-xp").textContent = vocabState.totalXP;
+
+  // Missed words section
+  const missedSection = $("#vr-missed-section");
+  const missedList = $("#vr-missed-list");
+  if (vocabState.missedWords.length > 0) {
+    missedSection.classList.remove("hidden");
+    missedList.innerHTML = vocabState.missedWords.map((w) => `
+      <div class="vr-missed-card">
+        <div class="vr-missed-word">${w.word}</div>
+        <div class="vr-missed-def">${w.definition}</div>
+        <div class="vr-missed-exp">${w.explanation}</div>
+      </div>
+    `).join("");
+  } else {
+    missedSection.classList.add("hidden");
+  }
+
+  // Save to history
+  vocabHistory.accuracy.push(pct);
+  vocabHistory.times.push(vocabState.elapsedSec);
+  vocabState.missedWords.forEach((w) => {
+    vocabHistory.missed[w.word] = (vocabHistory.missed[w.word] || 0) + 1;
+  });
+  if (vocabHistory.accuracy.length > 50) vocabHistory.accuracy = vocabHistory.accuracy.slice(-50);
+  if (vocabHistory.times.length > 50) vocabHistory.times = vocabHistory.times.slice(-50);
+  store("vocabHistory", vocabHistory);
+}
+
+function formatVocabTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// Play again
+$("#vocab-play-again").addEventListener("click", () => {
+  startVocabGame();
+});
+
+// Practice missed words
+$("#vocab-practice-missed-btn").addEventListener("click", () => {
+  if (vocabState.missedWords.length < 4) {
+    // Not enough missed — just play again
+    startVocabGame();
+    return;
+  }
+  // Use missed words for a practice round
+  vocabState.isPracticeMissed = true;
+  vocabState.round = 1;
+  vocabState.totalCorrect = 0;
+  vocabState.totalWrong = 0;
+  vocabState.totalXP = 0;
+  const missed = [...vocabState.missedWords].slice(0, 4);
+  vocabState.missedWords = [];
+  vocabState.allRoundResults = [];
+
+  $("#vocab-results-overlay").classList.add("hidden");
+  $("#vocab-round-label").textContent = "Practice Round";
+  $("#vocab-xp").textContent = "0";
+  startVocabTimer();
+
+  // Load practice round with missed words
+  vocabState.words = missed;
+  vocabState.shuffledDefs = [...missed]
+    .map((w, i) => ({ ...w, originalIdx: i }))
+    .sort(() => Math.random() - 0.5);
+  vocabState.matches = {};
+  vocabState.selectedWord = null;
+  vocabState.selectedDef = null;
+  renderVocabBoard();
+  $("#vocab-instruction").textContent = "Practice round: match the words you missed!";
+  $("#vocab-submit-btn").classList.remove("hidden");
+  $("#vocab-submit-btn").disabled = true;
+  $("#vocab-next-btn").classList.add("hidden");
+  $("#vocab-practice-missed-btn").classList.add("hidden");
+  clearVocabLines();
+});
+
+// Home button from vocab results
+$("#vocab-go-home").addEventListener("click", () => {
+  stopVocabTimer();
+  $("#vocab-results-overlay").classList.add("hidden");
+  loadHome();
+  showScreen("home");
+});
+
+// Redraw lines on resize
+window.addEventListener("resize", () => {
+  if (screens.vocab.classList.contains("active")) {
+    drawVocabLines();
+  }
+});
 
 // ===== INIT =====
 init();

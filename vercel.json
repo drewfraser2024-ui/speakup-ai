@@ -4,6 +4,7 @@
   "rewrites": [
     { "source": "/api/chat", "destination": "/api/chat" },
     { "source": "/api/analyze", "destination": "/api/analyze" },
-    { "source": "/api/daily", "destination": "/api/daily" }
+    { "source": "/api/daily", "destination": "/api/daily" },
+    { "source": "/api/vocab", "destination": "/api/vocab" }
   ]
 }
