@@ -280,17 +280,28 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .vocab-round-bar span{font-size:.85rem;font-weight:600;color:var(--text2)}
 .vocab-xp-badge{background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;padding:6px 14px;border-radius:50px;font-size:.8rem;font-weight:700}
 
-.vocab-instruction{text-align:center;font-size:.88rem;color:var(--text2);min-height:24px}
+.vocab-instruction{text-align:center;font-size:.88rem;color:var(--text2);min-height:24px;transition:all .2s}
 
+/* Live Score Bar */
+.vocab-live-score{display:flex;align-items:center;gap:12px;padding:8px 0}
+.vls-item{display:flex;align-items:center;gap:4px;font-size:.82rem;font-weight:700}
+.vls-item.correct{color:var(--success)}
+.vls-item.wrong{color:var(--danger)}
+.vls-progress-bar{flex:1;height:6px;background:var(--bg3);border-radius:6px;overflow:hidden}
+.vls-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--success),#22d3ee);border-radius:6px;transition:width .4s ease}
+
+/* Game Area */
 .vocab-game-area{display:grid;grid-template-columns:1fr 40px 1fr;gap:0;position:relative;min-height:320px}
 .vocab-column{display:flex;flex-direction:column;gap:12px}
 .vocab-lines{position:relative}
 .vocab-lines svg{position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible}
 
+/* Match Lines */
 .vocab-match-line{stroke:var(--primary);stroke-width:2;stroke-dasharray:6 3;opacity:.7;transition:all .3s}
 .vocab-match-line.correct{stroke:var(--success);stroke-width:3;stroke-dasharray:none;opacity:1}
 .vocab-match-line.wrong{stroke:var(--danger);stroke-width:3;stroke-dasharray:none;opacity:1}
 
+/* Items */
 .vocab-item{background:var(--surface);border:2px solid var(--border);border-radius:var(--radius-sm);padding:14px 12px;text-align:left;color:var(--text);font-family:inherit;font-size:.85rem;cursor:pointer;transition:all .2s;position:relative;display:flex;flex-direction:column;gap:4px}
 .vocab-item:active{transform:scale(.97)}
 
@@ -301,20 +312,39 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .vocab-word .vi-text{font-weight:700;font-size:.95rem}
 .vocab-def{border-right:3px solid var(--accent)}
 
-.vocab-item.selected{border-color:var(--primary);background:rgba(108,99,255,.1);box-shadow:0 0 0 3px var(--primary-glow)}
-.vocab-item.matched{border-color:rgba(108,99,255,.5);background:rgba(108,99,255,.06);opacity:.85}
-.vocab-item.matched .vi-num,.vocab-item.matched .vi-letter{background:var(--primary);color:#fff}
+/* Selection */
+.vocab-item.selected{border-color:var(--primary);background:rgba(108,99,255,.12);box-shadow:0 0 0 3px var(--primary-glow);transform:scale(1.02)}
 
-.vocab-item.correct{border-color:var(--success)!important;background:rgba(74,222,128,.08)!important;opacity:1!important}
+/* Correct (locked) */
+.vocab-item.correct{border-color:var(--success)!important;background:rgba(74,222,128,.1)!important;opacity:1!important;cursor:default}
 .vocab-item.correct .vi-num,.vocab-item.correct .vi-letter{background:var(--success);color:#fff}
-.vocab-item.wrong{border-color:var(--danger)!important;background:rgba(248,113,113,.08)!important;opacity:1!important}
+.vocab-item.locked{pointer-events:none}
+
+/* Wrong (flash) */
+.vocab-item.wrong{border-color:var(--danger)!important;background:rgba(248,113,113,.12)!important;opacity:1!important}
 .vocab-item.wrong .vi-num,.vocab-item.wrong .vi-letter{background:var(--danger);color:#fff}
-.vocab-item.should-be{box-shadow:0 0 0 2px var(--success),inset 0 0 0 1px var(--success)}
 
-.vocab-explanation{font-size:.75rem;color:var(--text2);line-height:1.4;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);animation:fadeUp .3s ease}
+/* Shake animation for wrong answers */
+.vocab-item.shake{animation:vocabShake .4s ease}
+@keyframes vocabShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-6px)}30%{transform:translateX(5px)}45%{transform:translateX(-4px)}60%{transform:translateX(3px)}75%{transform:translateX(-2px)}}
 
+/* Feedback badges (checkmark / X) */
+.vi-badge{position:absolute;top:-8px;left:-8px;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:5;animation:badgePop .3s ease}
+.vi-badge.correct{background:var(--success)}
+.vi-badge.wrong{background:var(--danger)}
+@keyframes badgePop{0%{transform:scale(0)}50%{transform:scale(1.3)}100%{transform:scale(1)}}
+
+/* XP popup */
+.xp-popup{position:absolute;top:-20px;left:50%;transform:translateX(-50%);font-size:.75rem;font-weight:800;color:var(--success);white-space:nowrap;pointer-events:none;animation:xpFloat 1s ease forwards;z-index:10}
+@keyframes xpFloat{0%{opacity:1;transform:translateX(-50%) translateY(0)}100%{opacity:0;transform:translateX(-50%) translateY(-30px)}}
+
+/* Explanation (slides in under word on correct) */
+.vocab-explanation{font-size:.75rem;color:var(--text2);line-height:1.4;margin-top:6px;padding-top:6px;border-top:1px solid rgba(74,222,128,.2);animation:fadeUp .3s ease}
+
+/* Actions */
 .vocab-actions{display:flex;flex-direction:column;gap:10px;align-items:center;padding-bottom:20px}
 
+/* Loading spinner */
 .vocab-loading{display:flex;gap:6px;justify-content:center;padding:40px}
 .vocab-loading span{width:10px;height:10px;background:var(--primary);border-radius:50%;animation:bounce .6s ease infinite}
 .vocab-loading span:nth-child(2){animation-delay:.1s}

@@ -209,9 +209,15 @@
           <div class="vocab-column" id="vocab-defs-col"></div>
         </div>
 
-        <!-- Submit / Next -->
+        <!-- Score bar (live during round) -->
+        <div class="vocab-live-score">
+          <div class="vls-item correct"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg><span id="vocab-live-correct">0</span></div>
+          <div class="vls-item wrong"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg><span id="vocab-live-wrong">0</span></div>
+          <div class="vls-progress-bar"><div id="vocab-progress-fill" class="vls-fill"></div></div>
+        </div>
+
+        <!-- Actions -->
         <div class="vocab-actions">
-          <button id="vocab-submit-btn" class="primary-btn" disabled>Check Answers</button>
           <button id="vocab-next-btn" class="primary-btn hidden">Next Round &rarr;</button>
           <button id="vocab-practice-missed-btn" class="ghost-btn hidden">Practice Missed Words</button>
         </div>

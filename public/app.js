@@ -1357,24 +1357,112 @@ function drawTrendChart(canvas, data) {
   });
 }
 
-// ===== VOCABULARY MATCHING GAME =====
+// ===== SOUND MANAGER =====
+const SoundFX = (() => {
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  function ensureContext() {
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  // Generate success sound: two quick ascending tones
+  function playCorrect() {
+    ensureContext();
+    const now = audioCtx.currentTime;
+    // Note 1
+    const osc1 = audioCtx.createOscillator();
+    const gain1 = audioCtx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(523, now); // C5
+    osc1.frequency.setValueAtTime(659, now + 0.08); // E5
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+    osc1.connect(gain1).connect(audioCtx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.2);
+    // Note 2 (higher, slightly delayed)
+    const osc2 = audioCtx.createOscillator();
+    const gain2 = audioCtx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(784, now + 0.1); // G5
+    gain2.gain.setValueAtTime(0, now);
+    gain2.gain.setValueAtTime(0.2, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+    osc2.connect(gain2).connect(audioCtx.destination);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.35);
+  }
+
+  // Generate error sound: quick descending buzz
+  function playWrong() {
+    ensureContext();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(180, now + 0.15);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+  }
+
+  // Perfect round fanfare: ascending arpeggio
+  function playPerfect() {
+    ensureContext();
+    const now = audioCtx.currentTime;
+    const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
+    notes.forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + i * 0.1);
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.setValueAtTime(0.2, now + i * 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.1 + 0.3);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(now + i * 0.1);
+      osc.stop(now + i * 0.1 + 0.35);
+    });
+  }
+
+  // Unlock audio on first user interaction (mobile requirement)
+  function unlock() {
+    ensureContext();
+  }
+
+  return { playCorrect, playWrong, playPerfect, unlock };
+})();
+
+// Unlock audio on first touch/click anywhere
+document.addEventListener("click", () => SoundFX.unlock(), { once: true });
+document.addEventListener("touchstart", () => SoundFX.unlock(), { once: true });
+
+
+// ===== VOCABULARY MATCHING GAME (Instant Feedback) =====
 let vocabState = {
-  words: [],             // Current round words
-  shuffledDefs: [],      // Shuffled definitions
-  matches: {},           // { wordIdx: defIdx }
-  selectedWord: null,    // Currently selected word index
-  selectedDef: null,     // Currently selected def index
+  words: [],              // Current round word data
+  shuffledDefs: [],       // Shuffled definitions
+  lockedCorrect: {},      // { wordIdx: defIdx } — correct pairs, locked permanently
+  wrongAttempts: {},      // { wordIdx: count } — how many wrong tries per word
+  selectedWord: null,     // Currently highlighted word index
+  selectedDef: null,      // Currently highlighted def index
   round: 1,
+  roundCorrect: 0,        // Correct in this round
+  roundWrong: 0,          // Wrong attempts in this round
   totalCorrect: 0,
   totalWrong: 0,
   totalXP: 0,
   startTime: null,
   timerInterval: null,
   elapsedSec: 0,
-  usedWords: [],         // Track used words across rounds
-  missedWords: [],       // Words user got wrong (for practice mode)
-  allRoundResults: [],   // Results from each round
+  usedWords: [],
+  missedWords: [],        // Words that had at least 1 wrong attempt
+  allRoundResults: [],
   isPracticeMissed: false,
+  isProcessing: false,    // Debounce flag during feedback animation
 };
 
 let vocabHistory = load("vocabHistory", { accuracy: [], times: [], missed: {} });
@@ -1383,10 +1471,13 @@ $("#mode-vocab").addEventListener("click", () => startVocabGame());
 
 function startVocabGame() {
   vocabState = {
-    words: [], shuffledDefs: [], matches: {}, selectedWord: null, selectedDef: null,
-    round: 1, totalCorrect: 0, totalWrong: 0, totalXP: 0,
+    words: [], shuffledDefs: [], lockedCorrect: {}, wrongAttempts: {},
+    selectedWord: null, selectedDef: null,
+    round: 1, roundCorrect: 0, roundWrong: 0,
+    totalCorrect: 0, totalWrong: 0, totalXP: 0,
     startTime: Date.now(), timerInterval: null, elapsedSec: 0,
     usedWords: [], missedWords: [], allRoundResults: [], isPracticeMissed: false,
+    isProcessing: false,
   };
   showScreen("vocab");
   const labels = { easy: "Easy", medium: "Medium", hard: "Hard", veryhard: "Hard" };
@@ -1397,6 +1488,7 @@ function startVocabGame() {
   loadVocabRound();
 }
 
+// ---- Timer ----
 function startVocabTimer() {
   vocabState.elapsedSec = 0;
   updateVocabTimerDisplay();
@@ -1405,28 +1497,37 @@ function startVocabTimer() {
     updateVocabTimerDisplay();
   }, 1000);
 }
-
-function stopVocabTimer() {
-  clearInterval(vocabState.timerInterval);
-}
-
+function stopVocabTimer() { clearInterval(vocabState.timerInterval); }
 function updateVocabTimerDisplay() {
   const m = Math.floor(vocabState.elapsedSec / 60);
   const s = vocabState.elapsedSec % 60;
   $("#vocab-timer-display").textContent = `${m}:${s.toString().padStart(2, "0")}`;
 }
+function formatVocabTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
+// ---- Load Round ----
 async function loadVocabRound() {
-  $("#vocab-round-label").textContent = `Round ${vocabState.round}`;
+  $("#vocab-round-label").textContent = vocabState.isPracticeMissed ? "Practice Round" : `Round ${vocabState.round}`;
   $("#vocab-xp").textContent = vocabState.totalXP;
   $("#vocab-instruction").textContent = "Loading words...";
   $("#vocab-words-col").innerHTML = '<div class="vocab-loading"><span></span><span></span><span></span></div>';
   $("#vocab-defs-col").innerHTML = "";
-  $("#vocab-submit-btn").disabled = true;
-  $("#vocab-submit-btn").classList.remove("hidden");
   $("#vocab-next-btn").classList.add("hidden");
   $("#vocab-practice-missed-btn").classList.add("hidden");
   clearVocabLines();
+  updateLiveScore(0, 0, 0);
+
+  vocabState.lockedCorrect = {};
+  vocabState.wrongAttempts = {};
+  vocabState.selectedWord = null;
+  vocabState.selectedDef = null;
+  vocabState.roundCorrect = 0;
+  vocabState.roundWrong = 0;
+  vocabState.isProcessing = false;
 
   const vocabDiff = difficulty === "veryhard" ? "hard" : difficulty;
 
@@ -1437,7 +1538,6 @@ async function loadVocabRound() {
       body: JSON.stringify({ difficulty: vocabDiff, exclude: vocabState.usedWords }),
     });
     const data = await res.json();
-
     if (!data.words || data.words.length !== 4) throw new Error("Bad data");
 
     vocabState.words = data.words;
@@ -1448,12 +1548,8 @@ async function loadVocabRound() {
       .map((w, i) => ({ ...w, originalIdx: i }))
       .sort(() => Math.random() - 0.5);
 
-    vocabState.matches = {};
-    vocabState.selectedWord = null;
-    vocabState.selectedDef = null;
-
     renderVocabBoard();
-    $("#vocab-instruction").textContent = "Tap a word, then tap its definition to match them.";
+    $("#vocab-instruction").textContent = "Tap a word, then tap its definition.";
   } catch (err) {
     console.error("Vocab load error:", err);
     $("#vocab-instruction").textContent = "Failed to load words. Tap to retry.";
@@ -1461,6 +1557,15 @@ async function loadVocabRound() {
   }
 }
 
+// ---- Live Score Bar ----
+function updateLiveScore(correct, wrong, total) {
+  $("#vocab-live-correct").textContent = correct;
+  $("#vocab-live-wrong").textContent = wrong;
+  const pct = total > 0 ? (correct / 4) * 100 : 0;
+  $("#vocab-progress-fill").style.width = `${pct}%`;
+}
+
+// ---- Render Board ----
 function renderVocabBoard() {
   const wordsCol = $("#vocab-words-col");
   const defsCol = $("#vocab-defs-col");
@@ -1486,108 +1591,205 @@ function renderVocabBoard() {
   });
 }
 
+// ---- Selection Logic ----
 function selectVocabWord(idx) {
-  // If this word is already matched, unmatch it
-  if (vocabState.matches[idx] !== undefined) {
-    const oldDef = vocabState.matches[idx];
-    delete vocabState.matches[idx];
-    updateVocabSelectionUI();
-    drawVocabLines();
-    updateSubmitState();
-    return;
-  }
+  if (vocabState.isProcessing) return;
+  // Ignore if this word is already locked correct
+  if (vocabState.lockedCorrect[idx] !== undefined) return;
 
   vocabState.selectedWord = idx;
+
+  // If a def is already selected, attempt the match
   if (vocabState.selectedDef !== null) {
-    makeVocabMatch(idx, vocabState.selectedDef);
+    attemptMatch(idx, vocabState.selectedDef);
   } else {
     updateVocabSelectionUI();
   }
 }
 
 function selectVocabDef(idx) {
-  // If this def is already matched, unmatch it
-  const matchedWord = Object.keys(vocabState.matches).find((k) => vocabState.matches[k] === idx);
-  if (matchedWord !== undefined) {
-    delete vocabState.matches[matchedWord];
-    updateVocabSelectionUI();
-    drawVocabLines();
-    updateSubmitState();
-    return;
-  }
+  if (vocabState.isProcessing) return;
+  // Ignore if this def is already locked
+  const isLocked = Object.values(vocabState.lockedCorrect).includes(idx);
+  if (isLocked) return;
 
   vocabState.selectedDef = idx;
+
+  // If a word is already selected, attempt the match
   if (vocabState.selectedWord !== null) {
-    makeVocabMatch(vocabState.selectedWord, idx);
+    attemptMatch(vocabState.selectedWord, vocabState.selectedDef);
   } else {
     updateVocabSelectionUI();
   }
 }
 
-function makeVocabMatch(wordIdx, defIdx) {
-  // Remove existing match for this word or def
-  Object.keys(vocabState.matches).forEach((k) => {
-    if (parseInt(k) === wordIdx || vocabState.matches[k] === defIdx) {
-      delete vocabState.matches[k];
-    }
-  });
+// ---- Core: Instant Match Evaluation ----
+function attemptMatch(wordIdx, defIdx) {
+  vocabState.isProcessing = true; // Lock input during animation
 
-  vocabState.matches[wordIdx] = defIdx;
+  const wordData = vocabState.words[wordIdx];
+  const defData = vocabState.shuffledDefs[defIdx];
+  const isCorrect = wordData.word === defData.word;
+
+  const wordEl = $(`.vocab-word[data-idx="${wordIdx}"]`);
+  const defEl = $(`.vocab-def[data-idx="${defIdx}"]`);
+
+  // Clear selection state
   vocabState.selectedWord = null;
   vocabState.selectedDef = null;
-  updateVocabSelectionUI();
-  drawVocabLines();
-  updateSubmitState();
+
+  if (isCorrect) {
+    // === CORRECT MATCH ===
+    SoundFX.playCorrect();
+    vocabState.roundCorrect++;
+    vocabState.totalCorrect++;
+
+    // XP: 25 base, +10 bonus if no wrong attempts on this word
+    const bonus = (vocabState.wrongAttempts[wordIdx] || 0) === 0 ? 10 : 0;
+    const xp = 25 + bonus;
+    vocabState.totalXP += xp;
+    $("#vocab-xp").textContent = vocabState.totalXP;
+
+    // Lock this pair
+    vocabState.lockedCorrect[wordIdx] = defIdx;
+
+    // Visual: green glow + checkmark + bounce
+    wordEl.classList.remove("selected");
+    defEl.classList.remove("selected");
+    wordEl.classList.add("correct", "locked");
+    defEl.classList.add("correct", "locked");
+
+    // Add checkmark badges
+    addFeedbackBadge(wordEl, "correct");
+    addFeedbackBadge(defEl, "correct");
+
+    // Show explanation under the word
+    const expEl = document.createElement("div");
+    expEl.className = "vocab-explanation";
+    expEl.textContent = wordData.explanation;
+    wordEl.appendChild(expEl);
+
+    // XP popup
+    showXPPopup(wordEl, `+${xp} XP`);
+
+    // Draw permanent green line
+    drawSingleLine(wordIdx, defIdx, "correct");
+
+    // Update live score
+    updateLiveScore(vocabState.roundCorrect, vocabState.roundWrong, 4);
+
+    // Update instruction
+    const remaining = 4 - vocabState.roundCorrect;
+    if (remaining > 0) {
+      $("#vocab-instruction").innerHTML = `<span style="color:var(--success)">Correct!</span> ${remaining} left`;
+    }
+
+    vocabState.isProcessing = false;
+
+    // Check if round is complete
+    if (vocabState.roundCorrect === 4) {
+      onRoundComplete();
+    }
+
+  } else {
+    // === WRONG MATCH ===
+    SoundFX.playWrong();
+    vocabState.roundWrong++;
+    vocabState.totalWrong++;
+    vocabState.wrongAttempts[wordIdx] = (vocabState.wrongAttempts[wordIdx] || 0) + 1;
+
+    // Track as missed word (only once per word)
+    if (vocabState.wrongAttempts[wordIdx] === 1) {
+      vocabState.missedWords.push(wordData);
+    }
+
+    updateLiveScore(vocabState.roundCorrect, vocabState.roundWrong, 4);
+
+    // Visual: red flash + shake + X badge
+    wordEl.classList.remove("selected");
+    defEl.classList.remove("selected");
+    wordEl.classList.add("wrong", "shake");
+    defEl.classList.add("wrong", "shake");
+    addFeedbackBadge(wordEl, "wrong");
+    addFeedbackBadge(defEl, "wrong");
+
+    // Flash a wrong line briefly
+    drawSingleLine(wordIdx, defIdx, "wrong");
+
+    $("#vocab-instruction").innerHTML = `<span style="color:var(--danger)">Not quite!</span> Try again.`;
+
+    // After brief delay, reset the pair so user can retry
+    setTimeout(() => {
+      wordEl.classList.remove("wrong", "shake");
+      defEl.classList.remove("wrong", "shake");
+      removeFeedbackBadge(wordEl);
+      removeFeedbackBadge(defEl);
+      removeLine(wordIdx);
+      updateVocabSelectionUI();
+      vocabState.isProcessing = false;
+    }, 700);
+  }
 }
 
-function updateVocabSelectionUI() {
-  // Words
-  $$(".vocab-word").forEach((el) => {
-    const idx = parseInt(el.dataset.idx);
-    el.classList.remove("selected", "matched");
-    if (idx === vocabState.selectedWord) el.classList.add("selected");
-    if (vocabState.matches[idx] !== undefined) el.classList.add("matched");
-  });
-
-  // Defs
-  $$(".vocab-def").forEach((el) => {
-    const idx = parseInt(el.dataset.idx);
-    el.classList.remove("selected", "matched");
-    if (idx === vocabState.selectedDef) el.classList.add("selected");
-    if (Object.values(vocabState.matches).includes(idx)) el.classList.add("matched");
-  });
+// ---- Feedback Badges (checkmark / X) ----
+function addFeedbackBadge(el, type) {
+  removeFeedbackBadge(el); // Clear existing
+  const badge = document.createElement("span");
+  badge.className = `vi-badge ${type}`;
+  if (type === "correct") {
+    badge.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
+  } else {
+    badge.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+  }
+  el.appendChild(badge);
 }
 
-function drawVocabLines() {
-  clearVocabLines();
+function removeFeedbackBadge(el) {
+  const existing = el.querySelector(".vi-badge");
+  if (existing) existing.remove();
+}
+
+// ---- XP Popup ----
+function showXPPopup(el, text) {
+  const popup = document.createElement("span");
+  popup.className = "xp-popup";
+  popup.textContent = text;
+  el.appendChild(popup);
+  setTimeout(() => popup.remove(), 1000);
+}
+
+// ---- Line Drawing (per-pair) ----
+function drawSingleLine(wordIdx, defIdx, cls) {
   const svg = $("#vocab-lines-svg");
   if (!svg) return;
 
   const gameArea = $(".vocab-game-area");
   const gaRect = gameArea.getBoundingClientRect();
+  const wordEl = $(`.vocab-word[data-idx="${wordIdx}"]`);
+  const defEl = $(`.vocab-def[data-idx="${defIdx}"]`);
+  if (!wordEl || !defEl) return;
 
-  Object.entries(vocabState.matches).forEach(([wIdx, dIdx]) => {
-    const wordEl = $(`.vocab-word[data-idx="${wIdx}"]`);
-    const defEl = $(`.vocab-def[data-idx="${dIdx}"]`);
-    if (!wordEl || !defEl) return;
+  const wRect = wordEl.getBoundingClientRect();
+  const dRect = defEl.getBoundingClientRect();
 
-    const wRect = wordEl.getBoundingClientRect();
-    const dRect = defEl.getBoundingClientRect();
+  const x1 = wRect.right - gaRect.left;
+  const y1 = wRect.top + wRect.height / 2 - gaRect.top;
+  const x2 = dRect.left - gaRect.left;
+  const y2 = dRect.top + dRect.height / 2 - gaRect.top;
 
-    const x1 = wRect.right - gaRect.left;
-    const y1 = wRect.top + wRect.height / 2 - gaRect.top;
-    const x2 = dRect.left - gaRect.left;
-    const y2 = dRect.top + dRect.height / 2 - gaRect.top;
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", x1);
+  line.setAttribute("y1", y1);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", y2);
+  line.setAttribute("class", `vocab-match-line ${cls}`);
+  line.dataset.word = wordIdx;
+  svg.appendChild(line);
+}
 
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", x1);
-    line.setAttribute("y1", y1);
-    line.setAttribute("x2", x2);
-    line.setAttribute("y2", y2);
-    line.setAttribute("class", "vocab-match-line");
-    line.dataset.word = wIdx;
-    svg.appendChild(line);
-  });
+function removeLine(wordIdx) {
+  const line = $(`#vocab-lines-svg line[data-word="${wordIdx}"]`);
+  if (line) line.remove();
 }
 
 function clearVocabLines() {
@@ -1595,122 +1797,82 @@ function clearVocabLines() {
   if (svg) svg.innerHTML = "";
 }
 
-function updateSubmitState() {
-  const allMatched = Object.keys(vocabState.matches).length === 4;
-  $("#vocab-submit-btn").disabled = !allMatched;
+function redrawLockedLines() {
+  clearVocabLines();
+  Object.entries(vocabState.lockedCorrect).forEach(([wIdx, dIdx]) => {
+    drawSingleLine(parseInt(wIdx), parseInt(dIdx), "correct");
+  });
 }
 
-// Submit answers
-$("#vocab-submit-btn").addEventListener("click", () => checkVocabAnswers());
-
-function checkVocabAnswers() {
-  let correct = 0;
-  let wrong = 0;
-  const roundMissed = [];
-
-  Object.entries(vocabState.matches).forEach(([wIdx, dIdx]) => {
-    const wordData = vocabState.words[parseInt(wIdx)];
-    const defData = vocabState.shuffledDefs[parseInt(dIdx)];
-    const isCorrect = wordData.word === defData.word;
-
-    // Mark word element
-    const wordEl = $(`.vocab-word[data-idx="${wIdx}"]`);
-    const defEl = $(`.vocab-def[data-idx="${dIdx}"]`);
-
-    if (isCorrect) {
-      correct++;
-      wordEl.classList.add("correct");
-      defEl.classList.add("correct");
-      // Color the line green
-      const line = $(`#vocab-lines-svg line[data-word="${wIdx}"]`);
-      if (line) line.classList.add("correct");
-    } else {
-      wrong++;
-      wordEl.classList.add("wrong");
-      defEl.classList.add("wrong");
-      const line = $(`#vocab-lines-svg line[data-word="${wIdx}"]`);
-      if (line) line.classList.add("wrong");
-      roundMissed.push(wordData);
-
-      // Show correct answer
-      const correctDefIdx = vocabState.shuffledDefs.findIndex((d) => d.word === wordData.word);
-      const correctDefEl = $(`.vocab-def[data-idx="${correctDefIdx}"]`);
-      if (correctDefEl) correctDefEl.classList.add("should-be");
-    }
-  });
-
-  // Disable all buttons
-  $$(".vocab-item").forEach((el) => { el.style.pointerEvents = "none"; });
-
-  // Calculate XP for this round
-  const roundXP = correct * 25 + (correct === 4 ? 50 : 0); // bonus for perfect round
-  vocabState.totalCorrect += correct;
-  vocabState.totalWrong += wrong;
-  vocabState.totalXP += roundXP;
-  vocabState.missedWords.push(...roundMissed);
-  vocabState.allRoundResults.push({ correct, wrong, roundXP });
-  $("#vocab-xp").textContent = vocabState.totalXP;
-
-  // Show round feedback
-  if (correct === 4) {
-    $("#vocab-instruction").innerHTML = `<span style="color:var(--success)">Perfect! +${roundXP} XP</span>`;
-  } else {
-    $("#vocab-instruction").innerHTML = `<span>${correct}/4 correct. +${roundXP} XP</span>`;
-  }
-
-  // Show explanations below each word
+// ---- Selection UI (highlights, not matches) ----
+function updateVocabSelectionUI() {
   $$(".vocab-word").forEach((el) => {
     const idx = parseInt(el.dataset.idx);
-    const wordData = vocabState.words[idx];
-    const expEl = document.createElement("div");
-    expEl.className = "vocab-explanation";
-    expEl.textContent = wordData.explanation;
-    el.appendChild(expEl);
+    el.classList.remove("selected");
+    if (idx === vocabState.selectedWord) el.classList.add("selected");
   });
+  $$(".vocab-def").forEach((el) => {
+    const idx = parseInt(el.dataset.idx);
+    el.classList.remove("selected");
+    if (idx === vocabState.selectedDef) el.classList.add("selected");
+  });
+}
 
-  // Show next/finish buttons
-  $("#vocab-submit-btn").classList.add("hidden");
-  if (vocabState.round < 3) {
-    $("#vocab-next-btn").classList.remove("hidden");
+// ---- Round Complete ----
+function onRoundComplete() {
+  const perfectRound = vocabState.roundWrong === 0;
+  if (perfectRound) {
+    vocabState.totalXP += 50; // Perfect round bonus
+    $("#vocab-xp").textContent = vocabState.totalXP;
+    SoundFX.playPerfect();
+    $("#vocab-instruction").innerHTML = `<span style="color:var(--success)">Perfect round! +50 XP bonus!</span>`;
   } else {
-    // Game over after 3 rounds
-    setTimeout(() => showVocabResults(), 1500);
+    $("#vocab-instruction").innerHTML = `<span style="color:var(--success)">Round complete!</span> ${vocabState.roundCorrect}/4 correct, ${vocabState.roundWrong} wrong attempts`;
   }
 
-  if (roundMissed.length > 0 && vocabState.round >= 3) {
-    $("#vocab-practice-missed-btn").classList.remove("hidden");
+  vocabState.allRoundResults.push({
+    correct: vocabState.roundCorrect,
+    wrong: vocabState.roundWrong,
+    roundXP: vocabState.roundCorrect * 25 + (perfectRound ? 50 : 0),
+  });
+
+  if (vocabState.round < 3 && !vocabState.isPracticeMissed) {
+    $("#vocab-next-btn").classList.remove("hidden");
+  } else {
+    // Game over
+    setTimeout(() => showVocabResults(), 1200);
   }
 }
 
-// Next round
+// ---- Next Round ----
 $("#vocab-next-btn").addEventListener("click", () => {
   vocabState.round++;
   loadVocabRound();
 });
 
-// Show final results
+// ---- Final Results ----
 function showVocabResults() {
   stopVocabTimer();
 
-  const totalQ = vocabState.round * 4;
-  const pct = Math.round((vocabState.totalCorrect / totalQ) * 100);
+  const totalAttempts = vocabState.totalCorrect + vocabState.totalWrong;
+  const pct = totalAttempts > 0 ? Math.round((vocabState.totalCorrect / totalAttempts) * 100) : 0;
   const timeStr = formatVocabTime(vocabState.elapsedSec);
 
-  // Animate
   const overlay = $("#vocab-results-overlay");
   overlay.classList.remove("hidden");
 
-  // Score ring
+  // Score ring animation
   const circumference = 263.89;
   const offset = circumference - (pct / 100) * circumference;
   const ring = $("#vocab-score-ring");
+  ring.style.transition = "none";
   ring.style.strokeDashoffset = circumference;
   setTimeout(() => {
     ring.style.transition = "stroke-dashoffset 1s ease";
     ring.style.strokeDashoffset = offset;
   }, 100);
 
-  // Animate percentage counter
+  // Counter animation
   let count = 0;
   const pctEl = $("#vocab-final-pct");
   const counter = setInterval(() => {
@@ -1724,23 +1886,35 @@ function showVocabResults() {
   $("#vr-time").textContent = timeStr;
   $("#vr-xp").textContent = vocabState.totalXP;
 
-  // Missed words section
+  // Missed words review
   const missedSection = $("#vr-missed-section");
   const missedList = $("#vr-missed-list");
   if (vocabState.missedWords.length > 0) {
     missedSection.classList.remove("hidden");
-    missedList.innerHTML = vocabState.missedWords.map((w) => `
+    // Deduplicate
+    const seen = new Set();
+    const unique = vocabState.missedWords.filter((w) => {
+      if (seen.has(w.word)) return false;
+      seen.add(w.word);
+      return true;
+    });
+    missedList.innerHTML = unique.map((w) => `
       <div class="vr-missed-card">
         <div class="vr-missed-word">${w.word}</div>
         <div class="vr-missed-def">${w.definition}</div>
         <div class="vr-missed-exp">${w.explanation}</div>
       </div>
     `).join("");
+
+    // Show practice button if enough missed words
+    if (unique.length >= 4) {
+      $("#vocab-practice-missed-btn").classList.remove("hidden");
+    }
   } else {
     missedSection.classList.add("hidden");
   }
 
-  // Save to history
+  // Persist history
   vocabHistory.accuracy.push(pct);
   vocabHistory.times.push(vocabState.elapsedSec);
   vocabState.missedWords.forEach((w) => {
@@ -1751,57 +1925,55 @@ function showVocabResults() {
   store("vocabHistory", vocabHistory);
 }
 
-function formatVocabTime(sec) {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
+// ---- Play Again ----
+$("#vocab-play-again").addEventListener("click", () => startVocabGame());
 
-// Play again
-$("#vocab-play-again").addEventListener("click", () => {
-  startVocabGame();
-});
-
-// Practice missed words
+// ---- Practice Missed Words ----
 $("#vocab-practice-missed-btn").addEventListener("click", () => {
-  if (vocabState.missedWords.length < 4) {
-    // Not enough missed — just play again
-    startVocabGame();
-    return;
-  }
-  // Use missed words for a practice round
+  const unique = [];
+  const seen = new Set();
+  vocabState.missedWords.forEach((w) => {
+    if (!seen.has(w.word)) { seen.add(w.word); unique.push(w); }
+  });
+
+  if (unique.length < 4) { startVocabGame(); return; }
+
   vocabState.isPracticeMissed = true;
   vocabState.round = 1;
   vocabState.totalCorrect = 0;
   vocabState.totalWrong = 0;
   vocabState.totalXP = 0;
-  const missed = [...vocabState.missedWords].slice(0, 4);
-  vocabState.missedWords = [];
   vocabState.allRoundResults = [];
+  const practice = unique.slice(0, 4);
+  vocabState.missedWords = [];
 
   $("#vocab-results-overlay").classList.add("hidden");
-  $("#vocab-round-label").textContent = "Practice Round";
-  $("#vocab-xp").textContent = "0";
   startVocabTimer();
 
-  // Load practice round with missed words
-  vocabState.words = missed;
-  vocabState.shuffledDefs = [...missed]
+  // Directly set words instead of fetching
+  vocabState.words = practice;
+  vocabState.shuffledDefs = [...practice]
     .map((w, i) => ({ ...w, originalIdx: i }))
     .sort(() => Math.random() - 0.5);
-  vocabState.matches = {};
+  vocabState.lockedCorrect = {};
+  vocabState.wrongAttempts = {};
   vocabState.selectedWord = null;
   vocabState.selectedDef = null;
-  renderVocabBoard();
-  $("#vocab-instruction").textContent = "Practice round: match the words you missed!";
-  $("#vocab-submit-btn").classList.remove("hidden");
-  $("#vocab-submit-btn").disabled = true;
+  vocabState.roundCorrect = 0;
+  vocabState.roundWrong = 0;
+  vocabState.isProcessing = false;
+
+  $("#vocab-round-label").textContent = "Practice Round";
+  $("#vocab-xp").textContent = "0";
   $("#vocab-next-btn").classList.add("hidden");
   $("#vocab-practice-missed-btn").classList.add("hidden");
   clearVocabLines();
+  updateLiveScore(0, 0, 0);
+  renderVocabBoard();
+  $("#vocab-instruction").textContent = "Practice: match the words you missed!";
 });
 
-// Home button from vocab results
+// ---- Home from results ----
 $("#vocab-go-home").addEventListener("click", () => {
   stopVocabTimer();
   $("#vocab-results-overlay").classList.add("hidden");
@@ -1809,10 +1981,10 @@ $("#vocab-go-home").addEventListener("click", () => {
   showScreen("home");
 });
 
-// Redraw lines on resize
+// ---- Redraw lines on resize ----
 window.addEventListener("resize", () => {
   if (screens.vocab.classList.contains("active")) {
-    drawVocabLines();
+    redrawLockedLines();
   }
 });
 
