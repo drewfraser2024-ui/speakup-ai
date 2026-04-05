@@ -1,13 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const client = new Anthropic();
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   const { profile, date } = req.body;
 
-  const systemPrompt = `Generate daily speech training content. Return ONLY valid JSON.
+  const systemPrompt = `Generate daily speech training content. Return ONLY valid JSON, no markdown.
 
 ${profile?.topics?.length ? `User interests: ${profile.topics.join(", ")}` : ""}
 ${profile?.goal ? `User goal: improving ${profile.goal}` : ""}
@@ -17,36 +17,28 @@ Return this exact JSON format:
 {
   "word": "<a powerful, useful vocabulary word>",
   "definition": "<clear, concise definition>",
-  "example": "<one sentence using the word naturally in speech>",
-  "fact": "<an interesting, surprising fact related to communication, psychology, or the user's interests - keep it under 30 words>",
-  "challenge": "<a specific, measurable speaking challenge for today, e.g. 'Use zero filler words in a 60-second response' or 'Ask 3 strong follow-up questions in conversation mode'>"
+  "example": "<one sentence using the word naturally>",
+  "fact": "<surprising fact about communication or user's interests, under 30 words>",
+  "challenge": "<specific, measurable speaking challenge for today>"
 }
 
-Pick a word that would genuinely improve someone's speaking. Not obscure - practical and impressive.
-Make the fact genuinely surprising and memorable.
-Make the challenge specific and achievable in one session.
-Use the date seed "${date}" to vary content daily.`;
+Pick a practical, impressive word. Make the fact genuinely surprising. Make the challenge achievable in one session. Use date "${date}" to vary content.`;
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 400,
-      system: systemPrompt,
-      messages: [{ role: "user", content: `Generate daily content for ${date}.` }],
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: `Generate daily content for ${date}.` }] }],
+      systemInstruction: systemPrompt,
     });
 
-    const raw = response.content[0].text;
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const raw = result.response.text();
+    const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       res.json(JSON.parse(jsonMatch[0]));
     } else {
-      res.json({
-        word: "Articulate",
-        definition: "Having the ability to speak fluently and express oneself clearly.",
-        example: "She gave an articulate presentation that captivated everyone.",
-        fact: "The average person speaks about 16,000 words per day.",
-        challenge: "Complete one speaking session with fewer than 5 filler words.",
-      });
+      throw new Error("No JSON found");
     }
   } catch (error) {
     console.error("Daily content error:", error.message);
@@ -54,7 +46,7 @@ Use the date seed "${date}" to vary content daily.`;
       word: "Eloquent",
       definition: "Fluent or persuasive in speaking or writing.",
       example: "His eloquent argument convinced the entire room.",
-      fact: "Public speaking is the #1 fear for most people, ahead of death.",
+      fact: "Public speaking is the number one fear for most people, ahead of death.",
       challenge: "Record a 90-second open-ended response and score above 6.",
     });
   }

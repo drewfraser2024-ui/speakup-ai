@@ -1,6 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const client = new Anthropic();
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const TONE_MAP = {
   gentle: "Be warm, patient, and encouraging. Praise good points before suggesting improvements.",
@@ -75,23 +75,33 @@ RULES:
    - Self-corrections ("I mean", "wait no" → user lost their train of thought)
    - Rambling or going off-topic
    - Short, lazy answers that lack substance
-5. When you detect speech errors, react naturally based on difficulty:
-   - EASY: Gently encourage ("No worries, take your time")
-   - MEDIUM: Note it briefly ("I noticed you hesitated there — try to commit to your thought")
-   - HARD: Call it out directly ("You stuttered. Slow down, think first, then speak")
-   - BRUTAL: Be ruthless ("You repeated yourself 3 times. That tells me you don't know what you're trying to say. Start over.")
+5. When you detect speech errors, react naturally based on difficulty.
 6. Occasionally (every 3-4 turns) give a brief inline observation about their speaking.
 7. NEVER break character. Stay in the conversation naturally.
 ${errorContext}`;
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 512,
-      system: systemPrompt,
-      messages,
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+    // Convert messages to Gemini format
+    const history = [];
+    for (const msg of messages.slice(0, -1)) {
+      history.push({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      });
+    }
+
+    const chat = model.startChat({
+      history,
+      systemInstruction: systemPrompt,
     });
-    res.json({ response: response.content[0].text });
+
+    const lastMsg = messages[messages.length - 1];
+    const result = await chat.sendMessage(lastMsg.content);
+    const text = result.response.text();
+
+    res.json({ response: text });
   } catch (error) {
     console.error("Chat Error:", error.message);
     res.status(500).json({ error: "Failed to get response" });
