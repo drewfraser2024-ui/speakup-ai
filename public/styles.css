@@ -354,17 +354,33 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .vocab-results-overlay{position:absolute;inset:0;background:rgba(10,10,15,.95);backdrop-filter:blur(10px);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto}
 .vocab-results-overlay.hidden{display:none}
 
-.vocab-results-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:30px 24px;max-width:420px;width:100%;text-align:center;animation:fadeUp .4s ease}
-.vocab-results-card h2{margin-bottom:20px;font-size:1.4rem}
+.vocab-results-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:30px 24px;max-width:460px;width:100%;text-align:center;animation:fadeUp .4s ease;max-height:90vh;overflow-y:auto}
+.vocab-results-card h2{margin-bottom:6px;font-size:1.4rem}
+.vr-subtitle{color:var(--text2);font-size:.88rem;margin-bottom:20px;line-height:1.4}
+.vr-section-title{font-size:.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);margin:16px 0 10px;font-weight:700}
 
 .vocab-final-score{display:flex;justify-content:center;margin-bottom:24px}
 .vr-ring-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center}
 .vr-pct{position:absolute;font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,var(--primary),var(--success));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 
-.vocab-stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px}
+.vocab-stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+.vocab-stats-row.compact{grid-template-columns:repeat(3,1fr);margin-bottom:12px}
+.vocab-stats-row:last-of-type{margin-bottom:16px}
 .vs-stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 8px;display:flex;flex-direction:column;gap:4px}
 .vs-num{font-size:1.1rem;font-weight:800;color:var(--text)}
 .vs-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
+.vs-stat.best{border-color:rgba(108,99,255,.2);background:rgba(108,99,255,.04)}
+.vs-stat.new-record{border-color:var(--success)!important;background:rgba(74,222,128,.08)!important;position:relative}
+.vs-stat.new-record::after{content:"NEW!";position:absolute;top:-8px;right:-4px;font-size:.55rem;font-weight:800;background:var(--success);color:#fff;padding:2px 6px;border-radius:50px}
+
+/* Round breakdown */
+.vr-round-breakdown{margin-bottom:16px;text-align:left}
+.vr-round-breakdown h3{font-size:.75rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);margin-bottom:10px;font-weight:700;text-align:center}
+.vr-round-row{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px;font-size:.85rem}
+.vr-round-row.perfect{border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.04)}
+.vr-round-num{font-weight:800;color:var(--primary);width:28px;flex-shrink:0}
+.vr-round-detail{flex:1;color:var(--text2)}
+.vr-round-xp{font-weight:700;color:var(--success);font-size:.8rem;white-space:nowrap}
 
 .vr-missed-section{margin-bottom:20px;text-align:left}
 .vr-missed-section h3{font-size:.9rem;margin-bottom:12px;text-align:center}
@@ -395,4 +411,5 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   .vocab-word .vi-text{font-size:.88rem}
   .tone-grid{grid-template-columns:1fr}
   .vocab-stats-row{grid-template-columns:repeat(2,1fr)}
+  .vocab-stats-row.compact{grid-template-columns:repeat(3,1fr)}
 }

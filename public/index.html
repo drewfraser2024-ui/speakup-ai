@@ -219,14 +219,15 @@
         <!-- Actions -->
         <div class="vocab-actions">
           <button id="vocab-next-btn" class="primary-btn hidden">Next Round &rarr;</button>
-          <button id="vocab-practice-missed-btn" class="ghost-btn hidden">Practice Missed Words</button>
         </div>
       </div>
 
       <!-- Results overlay -->
       <div id="vocab-results-overlay" class="vocab-results-overlay hidden">
         <div class="vocab-results-card">
-          <h2>Game Over!</h2>
+          <h2 id="vr-title">Game Complete!</h2>
+          <p id="vr-subtitle" class="vr-subtitle"></p>
+
           <div class="vocab-final-score">
             <div class="vr-ring-wrap">
               <svg viewBox="0 0 100 100" width="100" height="100">
@@ -238,12 +239,32 @@
               <span id="vocab-final-pct" class="vr-pct">0%</span>
             </div>
           </div>
+
+          <!-- This Session -->
+          <h3 class="vr-section-title">This Session</h3>
           <div class="vocab-stats-row">
+            <div class="vs-stat"><span id="vr-rounds" class="vs-num">0</span><span class="vs-label">Rounds</span></div>
             <div class="vs-stat"><span id="vr-correct" class="vs-num">0</span><span class="vs-label">Correct</span></div>
             <div class="vs-stat"><span id="vr-wrong" class="vs-num">0</span><span class="vs-label">Wrong</span></div>
             <div class="vs-stat"><span id="vr-time" class="vs-num">0:00</span><span class="vs-label">Time</span></div>
-            <div class="vs-stat"><span id="vr-xp" class="vs-num">0</span><span class="vs-label">XP</span></div>
           </div>
+          <div class="vocab-stats-row compact">
+            <div class="vs-stat"><span id="vr-accuracy" class="vs-num">0%</span><span class="vs-label">Accuracy</span></div>
+            <div class="vs-stat"><span id="vr-xp" class="vs-num">0</span><span class="vs-label">XP Earned</span></div>
+            <div class="vs-stat"><span id="vr-words" class="vs-num">0</span><span class="vs-label">Words</span></div>
+          </div>
+
+          <!-- Personal Best -->
+          <h3 class="vr-section-title">Personal Records</h3>
+          <div class="vocab-stats-row compact">
+            <div class="vs-stat best"><span id="vr-best-accuracy" class="vs-num">--</span><span class="vs-label">Best Accuracy</span></div>
+            <div class="vs-stat best"><span id="vr-best-time" class="vs-num">--</span><span class="vs-label">Best Time</span></div>
+            <div class="vs-stat best"><span id="vr-total-plays" class="vs-num">--</span><span class="vs-label">Games Played</span></div>
+            <div class="vs-stat best"><span id="vr-avg-accuracy" class="vs-num">--</span><span class="vs-label">Avg Accuracy</span></div>
+          </div>
+
+          <!-- Round breakdown -->
+          <div id="vr-round-breakdown" class="vr-round-breakdown"></div>
 
           <!-- Missed words review -->
           <div id="vr-missed-section" class="vr-missed-section hidden">
@@ -253,7 +274,8 @@
 
           <div class="vocab-results-actions">
             <button id="vocab-play-again" class="primary-btn">Play Again</button>
-            <button id="vocab-go-home" class="ghost-btn">Home</button>
+            <button id="vocab-practice-missed-btn" class="ghost-btn hidden">Practice Missed Words</button>
+            <button id="vocab-go-home" class="ghost-btn">Back to Home</button>
           </div>
         </div>
       </div>
