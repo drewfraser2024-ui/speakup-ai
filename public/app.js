@@ -5,6 +5,133 @@ const $$ = (s) => document.querySelectorAll(s);
 function store(key, val) { localStorage.setItem("su_" + key, JSON.stringify(val)); }
 function load(key, fallback) { try { return JSON.parse(localStorage.getItem("su_" + key)) || fallback; } catch { return fallback; } }
 
+// ===== SUPABASE =====
+const SUPABASE_URL = "https://eyiniiiwjdkzxozqwwqi.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5aW5paWl3amRrenhvenF3d3FpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEwMDY5MzcsImV4cCI6MjA4NjU4MjkzN30.mcl-KYDnOIVAZZWZtvIAvkphayrqFvjayQo9UVsRBI0";
+
+let supabaseClient = null;
+try {
+  if (window.supabase && window.supabase.createClient) {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    console.log("Supabase connected");
+  }
+} catch (e) {
+  console.warn("Supabase init failed:", e);
+}
+
+// Device ID — persistent anonymous identifier
+function getDeviceId() {
+  let id = localStorage.getItem("su_device_id");
+  if (!id) {
+    id = "dev_" + crypto.randomUUID();
+    localStorage.setItem("su_device_id", id);
+  }
+  return id;
+}
+const deviceId = getDeviceId();
+
+// --- Supabase Sync Functions ---
+async function syncProfileToCloud(profileData) {
+  if (!supabaseClient || !profileData) return;
+  try {
+    const { error } = await supabaseClient.from("profiles").upsert({
+      device_id: deviceId,
+      name: profileData.name || "",
+      native_language: profileData.nativeLang || "English",
+      target_language: profileData.targetLang || "English",
+      level: profileData.level || "beginner",
+      goals: profileData.goal || "",
+      sessions_count: (load("sessions", [])).length,
+      total_xp: load("vocabHistory", { totalXP: 0 }).totalXP || 0,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "device_id" });
+    if (error) console.warn("Profile sync error:", error.message);
+  } catch (e) { console.warn("Profile sync failed:", e); }
+}
+
+async function syncSessionToCloud(sessionData) {
+  if (!supabaseClient || !sessionData) return;
+  try {
+    const { error } = await supabaseClient.from("sessions").insert({
+      device_id: deviceId,
+      mode: sessionData.mode || "",
+      topic: sessionData.topic || "",
+      duration: sessionData.duration || 0,
+      score: sessionData.scores || {},
+      metrics: sessionData.metrics || {},
+      tone_data: sessionData.toneData || {},
+      transcript: sessionData.transcript || [],
+    });
+    if (error) console.warn("Session sync error:", error.message);
+  } catch (e) { console.warn("Session sync failed:", e); }
+}
+
+async function syncVocabHistoryToCloud() {
+  if (!supabaseClient) return;
+  try {
+    const vh = load("vocabHistory", null);
+    if (!vh) return;
+    const { error } = await supabaseClient.from("vocab_history").upsert({
+      device_id: deviceId,
+      accuracy: vh.accuracy || [],
+      times: vh.times || [],
+      missed: vh.missed || {},
+      total_plays: vh.totalPlays || 0,
+      best_accuracy: vh.bestAccuracy || 0,
+      best_time: vh.bestTime || 0,
+      total_xp: vh.totalXP || 0,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "device_id" });
+    if (error) console.warn("Vocab sync error:", error.message);
+  } catch (e) { console.warn("Vocab sync failed:", e); }
+}
+
+async function syncDailyContentToCloud(dateStr, content) {
+  if (!supabaseClient || !content) return;
+  try {
+    const { error } = await supabaseClient.from("daily_content").upsert({
+      device_id: deviceId,
+      date: dateStr,
+      content: content,
+    }, { onConflict: "device_id,date" });
+    if (error) console.warn("Daily sync error:", error.message);
+  } catch (e) { console.warn("Daily sync failed:", e); }
+}
+
+// Pull cloud data on first load (cloud → localStorage if localStorage is empty)
+async function pullCloudData() {
+  if (!supabaseClient) return;
+  try {
+    // Pull profile if none locally
+    if (!load("profile", null)) {
+      const { data } = await supabaseClient.from("profiles")
+        .select("*").eq("device_id", deviceId).single();
+      if (data) {
+        const p = {
+          name: data.name, goal: data.goals, level: data.level,
+          nativeLang: data.native_language, targetLang: data.target_language,
+        };
+        store("profile", p);
+        profile = p;
+      }
+    }
+    // Pull vocab history if none locally
+    if (!load("vocabHistory", null)) {
+      const { data } = await supabaseClient.from("vocab_history")
+        .select("*").eq("device_id", deviceId).single();
+      if (data) {
+        const vh = {
+          accuracy: data.accuracy || [], times: data.times || [],
+          missed: data.missed || {}, totalPlays: data.total_plays || 0,
+          bestAccuracy: data.best_accuracy || 0, bestTime: data.best_time || 0,
+          totalXP: data.total_xp || 0,
+        };
+        store("vocabHistory", vh);
+      }
+    }
+  } catch (e) { console.warn("Cloud pull failed:", e); }
+}
+
 // ===== STATE =====
 let profile = load("profile", null);
 let sessions = load("sessions", []);
@@ -384,7 +511,12 @@ function showScreen(name) {
 }
 
 // ===== INIT =====
-function init() {
+async function init() {
+  // Try to restore from cloud if localStorage is empty
+  await pullCloudData();
+  // Re-read profile in case cloud data was pulled
+  profile = load("profile", null);
+
   if (!profile) {
     showScreen("onboard");
   } else {
@@ -430,6 +562,7 @@ function advanceOnboarding() {
   if (obStep > 4) {
     profile = { ...obData, created: today };
     store("profile", profile);
+    syncProfileToCloud(profile);
     loadHome();
     showScreen("home");
     return;
@@ -452,6 +585,7 @@ async function loadHome() {
   if (!dailyContent) {
     dailyContent = await fetchDailyContent();
     store("daily_" + today, dailyContent);
+    syncDailyContentToCloud(today, dailyContent);
   }
   if (dailyContent) {
     $("#daily-word").textContent = dailyContent.word || "—";
@@ -1075,6 +1209,8 @@ async function analyzeAndShowResults(text, mode, prompt, voiceMetrics, speechErr
     sessions.unshift(session);
     if (sessions.length > 100) sessions.length = 100;
     store("sessions", sessions);
+    syncSessionToCloud(session);
+    syncProfileToCloud(profile);
   } catch (err) {
     console.error("Analysis error:", err);
     $("#overall-label").textContent = "Analysis failed. Check your connection.";
@@ -2000,6 +2136,7 @@ function vocabShowResults() {
   if (vocabHistory.accuracy.length > 50) vocabHistory.accuracy = vocabHistory.accuracy.slice(-50);
   if (vocabHistory.times.length > 50) vocabHistory.times = vocabHistory.times.slice(-50);
   store("vocabHistory", vocabHistory);
+  syncVocabHistoryToCloud();
 
   // --- Compute historical averages ---
   const avgAccuracy = vocabHistory.accuracy.length > 0
