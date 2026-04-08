@@ -90,6 +90,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .diff-pill[data-diff="hard"].active{background:var(--hard);border-color:var(--hard);color:#fff}
 .diff-pill[data-diff="veryhard"].active{background:var(--veryhard);border-color:var(--veryhard);color:#fff}
 
+/* Home Footer */
+.home-footer{text-align:center;padding:24px 0 8px;margin-top:12px;border-top:1px solid var(--border)}
+.home-footer-link{color:var(--text3);font-size:.78rem;text-decoration:none;transition:color .2s}
+.home-footer-link:hover{color:var(--primary)}
+
 /* Buttons */
 .primary-btn{padding:14px 32px;background:linear-gradient(135deg,var(--primary),#5a52e0);border:none;border-radius:50px;color:#fff;font-size:.95rem;font-family:inherit;font-weight:600;cursor:pointer;transition:all .2s}
 .primary-btn:hover{transform:translateY(-2px);box-shadow:0 6px 24px var(--primary-glow)}
