@@ -1,7 +1,11 @@
 import { getGroqClient } from "./_groq.js";
+import { rateLimit } from "./_rateLimit.js";
+
+const checkRate = rateLimit({ maxRequests: 10, windowMs: 60_000 });
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (checkRate(req, res)) return;
 
   const { profile, date } = req.body;
 

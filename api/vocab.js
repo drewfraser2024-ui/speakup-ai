@@ -1,4 +1,7 @@
 import { getGroqClient } from "./_groq.js";
+import { rateLimit } from "./_rateLimit.js";
+
+const checkRate = rateLimit({ maxRequests: 20, windowMs: 60_000 });
 
 const DIFF_DESCRIPTIONS = {
   easy: "common everyday English words that most people use daily (e.g. generous, fragile, cozy, genuine). These should be simple but still worth learning definitions for.",
@@ -8,6 +11,7 @@ const DIFF_DESCRIPTIONS = {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  if (checkRate(req, res)) return;
 
   try {
     const { difficulty = "easy", exclude = [] } = req.body;
