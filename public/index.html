@@ -505,6 +505,30 @@
       </div>
     </div>
 
+    <!-- ===== INSTRUCTIONAL MODAL ===== -->
+    <div id="instruction-modal" class="instruction-modal hidden">
+      <div class="instruction-modal-backdrop"></div>
+      <div class="instruction-modal-card">
+        <button class="instruction-modal-close" id="modal-close-btn" aria-label="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+        <div class="instruction-modal-icon" id="modal-icon"></div>
+        <h2 class="instruction-modal-title" id="modal-title"></h2>
+        <p class="instruction-modal-explanation" id="modal-explanation"></p>
+        <div class="instruction-modal-steps" id="modal-steps"></div>
+        <p class="instruction-modal-note" id="modal-note"></p>
+        <p class="instruction-modal-instruction" id="modal-instruction"></p>
+        <div class="instruction-modal-actions">
+          <button class="primary-btn instruction-modal-start" id="modal-start-btn">Begin</button>
+          <button class="ghost-btn instruction-modal-back" id="modal-back-btn">Back</button>
+        </div>
+        <label class="instruction-modal-remember">
+          <input type="checkbox" id="modal-dont-show">
+          <span>Don't show this again</span>
+        </label>
+      </div>
+    </div>
+
   </div>
   <script src="app.js"></script>
 </body>

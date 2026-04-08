@@ -1,6 +1,4 @@
-import Groq from "groq-sdk";
-
-const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import { getGroqClient } from "./_groq.js";
 
 const TONE_MAP = {
   gentle: "Be warm, patient, and encouraging. Praise good points before suggesting improvements.",
@@ -31,10 +29,41 @@ const DIFF_PROMPTS = {
 - When user stutters: "You're stumbling. If you can't say it cleanly, you don't know it well enough. Again."`,
 };
 
+function buildFallbackChatReply({ difficulty, speechErrors, voiceTone }) {
+  const challengeByDiff = {
+    easy: "Nice effort. Give me one simple, concrete example to support your point.",
+    medium: "Good start. Tighten your structure into one clear point, one reason, and one example.",
+    hard: "Your point needs more precision. Restate it with stronger wording and one concrete proof.",
+    veryhard: "You need sharper delivery. Rebuild your argument with a clear claim, evidence, and impact.",
+  };
+
+  const tips = [];
+
+  if (speechErrors) {
+    tips.push("I caught a few speech slips, so slow down and finish each sentence before starting the next.");
+  }
+  if (voiceTone?.expressiveness && /mono|flat/i.test(voiceTone.expressiveness)) {
+    tips.push("Your tone sounded flat, so stress one key word per sentence to sound more engaging.");
+  }
+  if (voiceTone?.estimatedTone && /nervous|uncertain/i.test(voiceTone.estimatedTone)) {
+    tips.push("You sounded a bit tense, so take one short pause before your main point.");
+  }
+
+  const first = tips[0] || challengeByDiff[difficulty] || challengeByDiff.easy;
+  const second = "Now say it again in 2-3 sentences with one specific example. What is your revised answer?";
+  return `${first} ${second}`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   const { messages, difficulty, profile, mode, speechErrors, voiceTone } = req.body;
+  const client = getGroqClient();
+  if (!client) {
+    return res.json({ response: buildFallbackChatReply({ difficulty, speechErrors, voiceTone }) });
+  }
+
+  const safeMessages = Array.isArray(messages) ? messages : [];
   const tone = TONE_MAP[profile?.tone] || TONE_MAP.direct;
   const diffPrompt = DIFF_PROMPTS[difficulty] || DIFF_PROMPTS.easy;
 
@@ -80,13 +109,13 @@ ${errorContext}${toneContext}`;
       max_tokens: 512,
       messages: [
         { role: "system", content: systemPrompt },
-        ...messages,
+        ...safeMessages,
       ],
     });
 
     res.json({ response: completion.choices[0].message.content });
   } catch (error) {
     console.error("Chat Error:", error.message);
-    res.status(500).json({ error: "Failed to get response" });
+    res.json({ response: buildFallbackChatReply({ difficulty, speechErrors, voiceTone }) });
   }
 }

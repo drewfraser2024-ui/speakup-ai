@@ -4,6 +4,10 @@ const $$ = (s) => document.querySelectorAll(s);
 // ===== STORAGE =====
 function store(key, val) { localStorage.setItem("su_" + key, JSON.stringify(val)); }
 function load(key, fallback) { try { return JSON.parse(localStorage.getItem("su_" + key)) || fallback; } catch { return fallback; } }
+function getLocalDateISO(date = new Date()) {
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10);
+}
 
 // ===== SUPABASE =====
 const SUPABASE_URL = "https://eyiniiiwjdkzxozqwwqi.supabase.co";
@@ -147,8 +151,17 @@ let recognition = null;
 let sessionStartTime = null;
 let lastSessionMode = load("lastMode", null);
 
-const today = new Date().toISOString().slice(0, 10);
+let today = getLocalDateISO();
 let dailyContent = load("daily_" + today, null);
+
+function refreshToday() {
+  const current = getLocalDateISO();
+  if (current !== today) {
+    today = current;
+    dailyContent = load("daily_" + today, null);
+  }
+  return today;
+}
 
 // ===== SPEECH ERROR DETECTION =====
 // Detects stutters, repetitions, false starts, self-corrections
@@ -409,7 +422,8 @@ function getVoiceMetrics(durationSec, wordCount) {
   if (volumeSamples.length === 0) return null;
   const avgVolume = volumeSamples.reduce((a, b) => a + b, 0) / volumeSamples.length;
   const maxVolume = Math.max(...volumeSamples);
-  const minVolume = Math.min(...volumeSamples.filter((v) => v > SILENCE_THRESHOLD));
+  const voicedSamples = volumeSamples.filter((v) => v > SILENCE_THRESHOLD);
+  const minVolume = voicedSamples.length > 0 ? Math.min(...voicedSamples) : 0;
   const volumeVariation = maxVolume - (minVolume || 0);
 
   // Words per minute
@@ -560,7 +574,7 @@ $("#ob-topics-next").addEventListener("click", () => advanceOnboarding());
 function advanceOnboarding() {
   obStep++;
   if (obStep > 4) {
-    profile = { ...obData, created: today };
+    profile = { ...obData, created: refreshToday() };
     store("profile", profile);
     syncProfileToCloud(profile);
     loadHome();
@@ -575,6 +589,8 @@ function advanceOnboarding() {
 
 // ===== HOME =====
 async function loadHome() {
+  const todayKey = refreshToday();
+
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   $("#home-greeting").textContent = greet;
@@ -584,8 +600,8 @@ async function loadHome() {
 
   if (!dailyContent) {
     dailyContent = await fetchDailyContent();
-    store("daily_" + today, dailyContent);
-    syncDailyContentToCloud(today, dailyContent);
+    store("daily_" + todayKey, dailyContent);
+    syncDailyContentToCloud(todayKey, dailyContent);
   }
   if (dailyContent) {
     $("#daily-word").textContent = dailyContent.word || "—";
@@ -603,10 +619,11 @@ async function loadHome() {
 
 async function fetchDailyContent() {
   try {
+    const todayKey = refreshToday();
     const res = await fetch("/api/daily", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile, date: today }),
+      body: JSON.stringify({ profile, date: todayKey }),
     });
     return await res.json();
   } catch {
@@ -624,7 +641,7 @@ function calcStreak() {
   let streak = 0;
   const d = new Date();
   for (let i = 0; i < 365; i++) {
-    const dateStr = d.toISOString().slice(0, 10);
+    const dateStr = getLocalDateISO(d);
     if (sessions.some((s) => s.date === dateStr)) streak++;
     else if (i > 0) break;
     d.setDate(d.getDate() - 1);
@@ -771,7 +788,7 @@ function getRandomPrompt() {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-$("#mode-open").addEventListener("click", () => startOpenMode());
+$("#mode-open").addEventListener("click", () => InstructionModal.show("open", startOpenMode));
 $("#open-skip-btn").addEventListener("click", () => {
   const prompt = getRandomPrompt();
   $("#open-prompt-text").textContent = prompt;
@@ -802,7 +819,7 @@ function startOpenMode() {
 }
 
 let openRecording = false;
-$("#open-mic-btn").addEventListener("click", () => {
+$("#open-mic-btn").addEventListener("click", async () => {
   if (!openRecording) {
     stopSpeaking(); // Stop AI voice before user speaks
     openRecording = true;
@@ -810,7 +827,7 @@ $("#open-mic-btn").addEventListener("click", () => {
     $("#open-done-btn").classList.remove("hidden");
     startTimer();
 
-    startRecordingWithAudio(
+    const started = await startRecordingWithAudio(
       (final, interim) => {
         openTranscript = final;
         $("#open-transcript").innerHTML =
@@ -819,6 +836,13 @@ $("#open-mic-btn").addEventListener("click", () => {
       null, null,
       $("#open-mic-btn")
     );
+    if (!started) {
+      openRecording = false;
+      stopTimer();
+      $("#open-mic-btn").classList.remove("recording");
+      $("#open-done-btn").classList.add("hidden");
+      $("#open-mic-label").textContent = "Voice unavailable";
+    }
   } else {
     openRecording = false;
     $("#open-mic-label").textContent = "Tap to Start";
@@ -863,7 +887,7 @@ const SILENCE_TIMEOUT = 2000; // 2 seconds of silence = done talking
 let convoFinalTranscript = "";
 let convoInterimTranscript = "";
 
-$("#mode-convo").addEventListener("click", () => startConvoMode());
+$("#mode-convo").addEventListener("click", () => InstructionModal.show("convo", startConvoMode));
 
 function updateConvoStatus(state) {
   convoState = state;
@@ -1202,7 +1226,7 @@ async function analyzeAndShowResults(text, mode, prompt, voiceMetrics, speechErr
 
     // Save session
     const session = {
-      date: today, mode, difficulty, scores: data,
+      date: refreshToday(), mode, difficulty, scores: data,
       duration: Math.round((Date.now() - sessionStartTime) / 1000),
       overall: data.overall || 0,
     };
@@ -1403,6 +1427,8 @@ function loadProgress() {
   $("#prog-best").textContent = best;
   $("#prog-streak").textContent = streak;
 
+  showScreen("progress");
+
   const canvas = $("#trend-chart");
   const empty = $("#trend-empty");
   if (total < 2) {
@@ -1411,7 +1437,9 @@ function loadProgress() {
   } else {
     canvas.style.display = "block";
     empty.style.display = "none";
-    drawTrendChart(canvas, sessions.slice(0, 20).reverse());
+    requestAnimationFrame(() => {
+      drawTrendChart(canvas, sessions.slice(0, 20).reverse());
+    });
   }
 
   const list = $("#history-list");
@@ -1430,7 +1458,6 @@ function loadProgress() {
       </div>`).join("");
   }
 
-  showScreen("progress");
 }
 
 function drawTrendChart(canvas, data) {
@@ -1569,12 +1596,194 @@ const SoundFX = (() => {
     ensureContext();
   }
 
-  return { playCorrect, playWrong, playPerfect, unlock };
+  // Smooth swoosh sound for modal open
+  function playModalOpen() {
+    if (load("soundMuted", false)) return;
+    ensureContext();
+    const now = audioCtx.currentTime;
+    // Filtered noise swoosh via oscillator sweep
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.exponentialRampToValueAtTime(680, now + 0.12);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.22);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(1200, now);
+    filter.frequency.exponentialRampToValueAtTime(600, now + 0.25);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.12, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.28);
+    osc.connect(filter).connect(gain).connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.3);
+    // Second harmonic layer for richness
+    const osc2 = audioCtx.createOscillator();
+    const gain2 = audioCtx.createGain();
+    osc2.type = "triangle";
+    osc2.frequency.setValueAtTime(480, now);
+    osc2.frequency.exponentialRampToValueAtTime(840, now + 0.15);
+    gain2.gain.setValueAtTime(0, now);
+    gain2.gain.linearRampToValueAtTime(0.06, now + 0.05);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+    osc2.connect(gain2).connect(audioCtx.destination);
+    osc2.start(now);
+    osc2.stop(now + 0.28);
+  }
+
+  return { playCorrect, playWrong, playPerfect, playModalOpen, unlock };
 })();
 
 // Unlock audio on first touch/click anywhere
 document.addEventListener("click", () => SoundFX.unlock(), { once: true });
 document.addEventListener("touchstart", () => SoundFX.unlock(), { once: true });
+
+// ===== INSTRUCTIONAL MODAL SYSTEM =====
+const InstructionModal = (() => {
+  const modalEl = $("#instruction-modal");
+  const cardEl = modalEl.querySelector(".instruction-modal-card");
+  const backdropEl = modalEl.querySelector(".instruction-modal-backdrop");
+  const titleEl = $("#modal-title");
+  const explanationEl = $("#modal-explanation");
+  const stepsEl = $("#modal-steps");
+  const noteEl = $("#modal-note");
+  const instructionEl = $("#modal-instruction");
+  const iconEl = $("#modal-icon");
+  const startBtn = $("#modal-start-btn");
+  const backBtn = $("#modal-back-btn");
+  const closeBtn = $("#modal-close-btn");
+  const dontShowCheck = $("#modal-dont-show");
+
+  let onStartCallback = null;
+  let currentModeKey = null;
+
+  const MODAL_CONTENT = {
+    convo: {
+      title: "Live Conversation",
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+      iconClass: "convo",
+      explanation: "This mode helps you improve your speaking skills through real-time AI practice.",
+      steps: [
+        "You speak into your phone",
+        "Your speech is converted into text",
+        "The text is sent to the AI",
+        "The AI responds back verbally",
+      ],
+      note: "This is NOT a live voice-to-voice call. The system uses speech-to-text to capture your words, and the AI responds based on the text it receives.",
+      instruction: "Speak clearly into your phone. Your words will be transcribed and the AI will respond out loud. This is designed to help you practice speaking in a simple and interactive way.",
+      startLabel: "Start Conversation",
+    },
+    open: {
+      title: "Open Ended Response",
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
+      iconClass: "open",
+      explanation: "This mode helps you practice longer, thoughtful spoken responses.",
+      steps: [
+        "You are given a prompt or question",
+        "You speak your answer into your phone",
+        "Your speech is converted into text",
+        "The system evaluates your response and provides feedback",
+      ],
+      note: "",
+      instruction: "Take your time and speak clearly. Try to give a complete and thoughtful answer.",
+      startLabel: "Start Practice",
+    },
+    vocab: {
+      title: "Vocab Match",
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`,
+      iconClass: "vocab",
+      explanation: "This mode helps you improve vocabulary by matching words to definitions.",
+      steps: [
+        "Words appear on one side",
+        "Definitions appear on the other",
+        "You match each word to the correct definition",
+      ],
+      note: "",
+      instruction: "Match each word with the correct definition as quickly and accurately as possible.",
+      startLabel: "Start Matching",
+    },
+  };
+
+  function shouldSkip(modeKey) {
+    const prefs = load("modalPrefs", {});
+    return prefs[modeKey] === true;
+  }
+
+  function saveSkipPref(modeKey) {
+    const prefs = load("modalPrefs", {});
+    prefs[modeKey] = true;
+    store("modalPrefs", prefs);
+  }
+
+  function show(modeKey, startCallback) {
+    if (shouldSkip(modeKey)) {
+      startCallback();
+      return;
+    }
+
+    const content = MODAL_CONTENT[modeKey];
+    if (!content) { startCallback(); return; }
+
+    currentModeKey = modeKey;
+    onStartCallback = startCallback;
+
+    // Populate content
+    iconEl.innerHTML = content.icon;
+    iconEl.className = "instruction-modal-icon " + content.iconClass;
+    titleEl.textContent = content.title;
+    explanationEl.textContent = content.explanation;
+
+    // Build steps
+    let stepsHTML = `<h4>How it works</h4><ul>`;
+    content.steps.forEach((step, i) => {
+      stepsHTML += `<li><span class="step-num">${i + 1}</span><span>${step}</span></li>`;
+    });
+    stepsHTML += `</ul>`;
+    stepsEl.innerHTML = stepsHTML;
+
+    noteEl.textContent = content.note || "";
+    instructionEl.textContent = content.instruction;
+    startBtn.textContent = content.startLabel;
+    dontShowCheck.checked = false;
+
+    // Show modal
+    modalEl.classList.remove("hidden");
+    modalEl.classList.remove("fade-out");
+    cardEl.classList.remove("closing");
+
+    // Play swoosh sound once
+    SoundFX.playModalOpen();
+  }
+
+  function close(runStart) {
+    cardEl.classList.add("closing");
+    modalEl.classList.add("fade-out");
+    setTimeout(() => {
+      modalEl.classList.add("hidden");
+      modalEl.classList.remove("fade-out");
+      cardEl.classList.remove("closing");
+
+      if (dontShowCheck.checked && currentModeKey) {
+        saveSkipPref(currentModeKey);
+      }
+
+      if (runStart && onStartCallback) {
+        onStartCallback();
+      }
+      onStartCallback = null;
+      currentModeKey = null;
+    }, 220);
+  }
+
+  // Event listeners
+  startBtn.addEventListener("click", () => close(true));
+  backBtn.addEventListener("click", () => close(false));
+  closeBtn.addEventListener("click", () => close(false));
+  backdropEl.addEventListener("click", () => close(false));
+
+  return { show };
+})();
 
 
 // ===== VOCABULARY MATCHING GAME (Instant Feedback) =====
@@ -1626,10 +1835,11 @@ let vocabHistory = load("vocabHistory", {
   totalPlays: 0,
   bestAccuracy: 0,
   bestTime: null,     // null = no record yet
+  totalXP: 0,
 });
 
 // --- Entry point ---
-$("#mode-vocab").addEventListener("click", () => startVocabGame());
+$("#mode-vocab").addEventListener("click", () => InstructionModal.show("vocab", startVocabGame));
 
 function startVocabGame() {
   // Reset session
@@ -2123,6 +2333,7 @@ function vocabShowResults() {
 
   // --- Update historical stats BEFORE displaying ---
   vocabHistory.totalPlays = (vocabHistory.totalPlays || 0) + 1;
+  vocabHistory.totalXP = (vocabHistory.totalXP || 0) + vocabSession.totalXP;
   vocabHistory.accuracy.push(pct);
   vocabHistory.times.push(vocabSession.elapsedSec);
   if (pct > (vocabHistory.bestAccuracy || 0)) vocabHistory.bestAccuracy = pct;

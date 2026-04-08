@@ -1,6 +1,4 @@
-import Groq from "groq-sdk";
-
-const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import { getGroqClient } from "./_groq.js";
 
 const DIFF_DESCRIPTIONS = {
   easy: "common everyday English words that most people use daily (e.g. generous, fragile, cozy, genuine). These should be simple but still worth learning definitions for.",
@@ -14,6 +12,8 @@ export default async function handler(req, res) {
   try {
     const { difficulty = "easy", exclude = [] } = req.body;
     const diffDesc = DIFF_DESCRIPTIONS[difficulty] || DIFF_DESCRIPTIONS.easy;
+    const client = getGroqClient();
+    if (!client) throw new Error("Missing GROQ_API_KEY");
 
     const excludeContext = exclude.length > 0
       ? `\nDo NOT use any of these words (already used): ${exclude.join(", ")}`
@@ -47,8 +47,12 @@ Rules:
       ],
     });
 
-    const text = completion.choices[0]?.message?.content?.trim();
-    const data = JSON.parse(text);
+    const raw = completion.choices[0]?.message?.content?.trim() || "";
+    const cleaned = raw.replace(/```json\n?/gi, "").replace(/```\n?/g, "").trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No JSON in vocab response");
+
+    const data = JSON.parse(jsonMatch[0]);
 
     if (!data.words || data.words.length !== 4) {
       throw new Error("Invalid response structure");

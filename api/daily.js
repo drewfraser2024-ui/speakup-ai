@@ -1,6 +1,4 @@
-import Groq from "groq-sdk";
-
-const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import { getGroqClient } from "./_groq.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -18,6 +16,9 @@ Return EXACTLY this JSON (no markdown):
 Use date "${date}" to vary content daily.`;
 
   try {
+    const client = getGroqClient();
+    if (!client) throw new Error("Missing GROQ_API_KEY");
+
     const completion = await client.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       max_tokens: 400,
